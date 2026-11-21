@@ -264,7 +264,13 @@ bool TdxBridge::startWatcher(QString &errMsg) {
 }
 
 void TdxBridge::pollAgentStatus() {
-    if (m_pollInFlight || m_vmIp.isEmpty()) return;
+    if (m_pollInFlight) return;
+    if (m_vmIp.isEmpty()) {
+        if (!detectVmIp()) {
+            emit statusMessage("等待 Windows 虚拟机...");
+            return;
+        }
+    }
     m_pollInFlight = true;
 
     QUrl url(QString("http://%1:19876/status").arg(m_vmIp));
@@ -275,9 +281,16 @@ void TdxBridge::pollAgentStatus() {
         m_pollInFlight = false;
         reply->deleteLater();
         if (reply->error() != QNetworkReply::NoError) {
+            m_failCount++;
             emit statusMessage("Agent未连接 (" + m_vmIp + ":19876)");
+            if (m_failCount >= 5) {
+                m_failCount = 0;
+                m_vmIp.clear();
+                detectVmIp();
+            }
             return;
         }
+        m_failCount = 0;
         const QJsonObject obj = QJsonDocument::fromJson(reply->readAll()).object();
         const QString title = obj["title"].toString();
         const QString stock = obj["stock"].toString().trimmed();

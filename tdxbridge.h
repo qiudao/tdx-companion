@@ -68,6 +68,7 @@ private:
     QString m_lastStockName;
     QString m_lastRawTitle;
     bool m_pollInFlight = false;
+    int m_failCount = 0;
 
     QStringList m_zxgKeys;
     QMap<QString, QString> m_keyToName;

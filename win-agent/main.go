@@ -15,7 +15,7 @@ import (
 	"unsafe"
 )
 
-const agentVersion = "2.0.0"
+const agentVersion = "2.0.1"
 
 var startTime = time.Now()
 
@@ -23,6 +23,7 @@ var (
 	user32                 = syscall.NewLazyDLL("user32.dll")
 	procFindWindowExW      = user32.NewProc("FindWindowExW")
 	procGetWindowTextW     = user32.NewProc("GetWindowTextW")
+	procGetClassNameW      = user32.NewProc("GetClassNameW")
 	procIsWindowVisible    = user32.NewProc("IsWindowVisible")
 	procRegisterWindowMsgW = user32.NewProc("RegisterWindowMessageW")
 	procPostMessageW       = user32.NewProc("PostMessageW")
@@ -38,22 +39,37 @@ func init() {
 
 func findTdxWindow() (uintptr, string) {
 	var hwnd uintptr
-	var buf [256]uint16
+	var fallbackHwnd uintptr
+	var fallbackTitle string
+	var titleBuf [256]uint16
+	var classBuf [128]uint16
+
 	for {
 		hwnd, _, _ = procFindWindowExW.Call(0, hwnd, 0, 0)
 		if hwnd == 0 {
-			return 0, ""
+			return fallbackHwnd, fallbackTitle
 		}
 		vis, _, _ := procIsWindowVisible.Call(hwnd)
 		if vis == 0 {
 			continue
 		}
-		n, _, _ := procGetWindowTextW.Call(hwnd, uintptr(unsafe.Pointer(&buf[0])), uintptr(len(buf)))
+		cn, _, _ := procGetClassNameW.Call(hwnd, uintptr(unsafe.Pointer(&classBuf[0])), uintptr(len(classBuf)))
+		cls := ""
+		if cn > 0 {
+			cls = syscall.UTF16ToString(classBuf[:cn])
+		}
+		n, _, _ := procGetWindowTextW.Call(hwnd, uintptr(unsafe.Pointer(&titleBuf[0])), uintptr(len(titleBuf)))
+		title := ""
 		if n > 0 {
-			title := syscall.UTF16ToString(buf[:n])
-			if strings.Contains(title, "通达信") {
-				return hwnd, title
-			}
+			title = syscall.UTF16ToString(titleBuf[:n])
+		}
+		// Exact match on Tongdaxin main window class (immune to browser tabs containing "通达信")
+		if cls == "TdxW_MainFrame_Class" {
+			return hwnd, title
+		}
+		if fallbackHwnd == 0 && strings.Contains(title, "通达信金融终端") {
+			fallbackHwnd = hwnd
+			fallbackTitle = title
 		}
 	}
 }
