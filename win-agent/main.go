@@ -11,8 +11,13 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 	"unsafe"
 )
+
+const agentVersion = "1.1.0"
+
+var startTime = time.Now()
 
 var (
 	user32                 = syscall.NewLazyDLL("user32.dll")
@@ -170,12 +175,31 @@ func handleWriteBlk(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "path": dst})
 }
 
+func handleHealth(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	hwnd, title := findTdxWindow()
+	latestDate, modTime := latestIndexInfo()
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"ok":               true,
+		"version":          agentVersion,
+		"uptime_sec":       int(time.Since(startTime).Seconds()),
+		"tdx_online":       hwnd != 0,
+		"tdx_title":        title,
+		"tdx_stock":        extractStockName(title),
+		"lday_latest_date": latestDate,
+		"lday_updated_at":  modTime.Format(time.RFC3339),
+	})
+}
+
 func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/status", handleStatus)
 	mux.HandleFunc("/switch", handleSwitch)
 	mux.HandleFunc("/file", handleFile)
 	mux.HandleFunc("/blk", handleWriteBlk)
+	mux.HandleFunc("/api/health", handleHealth)
+	mux.HandleFunc("/api/breadth", handleBreadth)
+	mux.HandleFunc("/api/kline", handleKline)
 
 	_ = http.ListenAndServe("0.0.0.0:19876", mux)
 }

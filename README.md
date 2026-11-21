@@ -24,9 +24,12 @@ macOS (Qt6) 同类自选股联动伴侣 + Windows (Go) 静默代理，用于配�
 ├── main.cpp            # Qt 入口
 ├── mainwindow.h/.cpp   # 主窗口 UI（经典黑红皮肤 + 无框切换）
 ├── tdxbridge.h/.cpp    # HTTP 轮询、切股、行情拉取与自选分类
-└── win-agent/
+├── win-agent/
     ├── go.mod
-    └── main.go         # Windows 端静默 Go HTTP Agent（端口 19876）
+    ├── main.go         # Windows 端静默 Go HTTP Agent（控制/健康检查，端口 19876）
+    └── marketdata.go   # 本地 vipdoc 日线/5分钟线解析、全市场情绪广度聚合与缓存
+└── docs/
+    └── AGENT_ARCHITECTURE.md  # TDX Local Sidecar 架构定位与 API 扩展规划
 ```
 
 ## 构建与运行
