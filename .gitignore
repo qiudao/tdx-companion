@@ -1,0 +1,5 @@
+build/
+win-agent/*.exe
+.DS_Store
+*.user
+*.swp
