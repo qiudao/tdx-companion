@@ -16,7 +16,7 @@ import (
 
 var (
 	user32                 = syscall.NewLazyDLL("user32.dll")
-	procEnumWindows        = user32.NewProc("EnumWindows")
+	procFindWindowExW      = user32.NewProc("FindWindowExW")
 	procGetWindowTextW     = user32.NewProc("GetWindowTextW")
 	procIsWindowVisible    = user32.NewProc("IsWindowVisible")
 	procRegisterWindowMsgW = user32.NewProc("RegisterWindowMessageW")
@@ -32,28 +32,25 @@ func init() {
 }
 
 func findTdxWindow() (uintptr, string) {
-	var foundHwnd uintptr
-	var foundTitle string
-
-	cb := syscall.NewCallback(func(hwnd uintptr, lparam uintptr) uintptr {
+	var hwnd uintptr
+	var buf [256]uint16
+	for {
+		hwnd, _, _ = procFindWindowExW.Call(0, hwnd, 0, 0)
+		if hwnd == 0 {
+			return 0, ""
+		}
 		vis, _, _ := procIsWindowVisible.Call(hwnd)
 		if vis == 0 {
-			return 1
+			continue
 		}
-		var buf [256]uint16
 		n, _, _ := procGetWindowTextW.Call(hwnd, uintptr(unsafe.Pointer(&buf[0])), uintptr(len(buf)))
 		if n > 0 {
 			title := syscall.UTF16ToString(buf[:n])
 			if strings.Contains(title, "通达信") {
-				foundHwnd = hwnd
-				foundTitle = title
-				return 0 // stop enumeration
+				return hwnd, title
 			}
 		}
-		return 1
-	})
-	procEnumWindows.Call(cb, 0)
-	return foundHwnd, foundTitle
+	}
 }
 
 func extractStockName(title string) string {
