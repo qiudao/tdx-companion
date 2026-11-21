@@ -1,48 +1,44 @@
-# TDX Local Sidecar (`tdx-agent`) 架构与扩展设计
+# TDX Data & Control Gateway (`tdx-agent`) 架构设计
 
 ## 1. 核心定位
 
-`tdx-agent` 运行在 Parallels Windows 虚拟机内（交互式 Session 1，监听 `0.0.0.0:19876`），定位为 **通达信本地「数据 + 控制」统一网关（Local Sidecar）**：
+`tdx-agent` 运行在 Parallels Windows 虚拟机内（交互式 Session 1，监听 `0.0.0.0:19876`），严格定位为 **纯「数据层 + 窗口控制层」基础设施（Zero Business Logic）**：
 
-- 将通达信封闭的 **Win32 窗口消息** 与 **本地二进制文件（`.day` / `.lc5` / `.tnf` / `.blk`）** 封装为轻量、极速的局域网 HTTP/JSON API。
-- 服务对象包括：macOS Qt6 联动伴侣、Python 复盘脚本、浏览器情绪看板以及 AI 助手直连。
+- **Windows 端只做不可替代的事**：Win32 窗口控制 + 本地通达信二进制文件（`.day` / `.lc5` / `.tnf` / `.blk`）的结构化读取与输出。
+- **Mac 端负责所有业务与分析**：Qt6 联动伴侣、离线 SQLite 复盘库（`~/.tdx_local_data/market.db`）、Python 选股/统计脚本及 AI 助手查询。
+- 业务口径（涨跌停阈值、是否剔除 ST、复权方式、各类情绪/选股指标）全部留在 Mac 端，**Windows 端一次部署、长期不动**。
 
 ## 2. 职责边界
 
-| 层级 | 职责 | 说明 |
+| 端 | 职责 | 说明 |
 | :--- | :--- | :--- |
-| **控制层 (Control)** | 读取当前焦点股、发送 `UWM_STOCK` 切股、读写 `.blk` 板块 | 必须运行于交互式 Session 1，零弹窗、零回调泄漏 |
-| **数据层 (Data)** | 直接解析 `C:\new_tdx\vipdoc` 日线/分钟线及 `hq_cache` 码表 | 避免跨虚拟机拷贝海量小文件，按需返回 JSON |
-| **聚合层 (Analytics)** | 全市场本地并发扫描与聚合（情绪广度、条件选股） | 5500+ 只 `.day` 本地扫描 < 0.3s，结果按文件修改时间缓存 |
+| **Windows (`tdx-agent`)** | 窗口控制原语 + 结构化原始数据原语 | 单二进制、零外部依赖、7×24 常驻，不写具体指标/策略 |
+| **macOS (`tools/tdx_sync.py`)** | 增量同步到本地离线库 + 任意统计/复盘/选股 | 写入 `~/.tdx_local_data/market.db`，**关闭虚拟机也可离线复盘** |
+| **macOS (`tdx_companion`)** | 盘中/盘后实时联动 UI | 跟随通达信切股、同类自选展示、一键切回通达信 |
 
-> **不做**：复杂 UI（留在 macOS 端）、重度回测引擎、外部行情抓取。保持单二进制、零外部依赖、7×24 常驻稳定。
+## 3. HTTP 原语接口规范（`v2.0`）
 
-## 3. HTTP API 规范
-
-### 控制与文件接口（已有）
-- `GET /status` — 返回当前通达信窗口标题与正在查看的股票名称
+### 3.1 元信息与窗口控制
+- `GET /health` — Agent 版本、运行时长、通达信窗口在线状态、本地日线最新日期
+- `GET /status` — 当前通达信窗口标题与正在查看的股票名称
 - `GET /switch?key=0002242` — 向通达信发送 `UWM_STOCK` 切换个股（`1`=沪, `0`=深, `2`=北）
-- `GET /file?name=zxg.blk` — 下载白名单内的通达信缓存/自选文件
-- `POST /blk?name=ai_pick` — 将股票代码列表回写为通达信自定义板块 `.blk`
 
-### 阶段 1：数据与情绪基础接口（已实现）
-- `GET /api/health`
-  - 返回 Agent 版本、运行时长、通达信窗口状态、以及本地 `sh999999.day` 最新交易日。
-- `GET /api/breadth?days=45`
-  - 扫描沪/深/北交所全市场 A 股 `.day`（剔除指数/ETF/债券），返回近 `days` 个交易日的：
-    - `total` / `up` / `down` / `flat` / `down_pct`
-    - `median_pct`（全市场涨跌幅中位数）
-    - `drop3` / `drop5` / `drop7` / `rise5` / `limit_down` / `limit_up`
-    - `amt_yi`（两市+北交所成交额，亿元）
-    - `sh_close` / `sh_pct`（上证指数对照）
-  - 内置基于 `sh999999.day` 修改时间的内存缓存，盘后数据未更新时毫秒级返回。
-- `GET /api/kline?key=0002242&period=day&limit=120`
-  - 读取单股本地 K 线（支持 `period=day` 日线与 `period=5m` 5 分钟线 `.lc5`），返回最新 `limit` 根 OHLCV JSON。
+### 3.2 结构化数据原语（`/data/*`）
+- `GET /data/bars?key=0002242&period=day|5m&limit=120`
+  - **纵切（时间序列）**：读取单股日线（`.day`）或 5 分钟线（`.lc5`），返回标准 OHLCV JSON。
+- `GET /data/cross-section?days=60&start=20260901&format=csv|json`
+  - **横切（全市场横截面）**：读取全市场 A 股近 `days` 个交易日（或 `>= start`）的 `date,key,board,open,high,low,close,prev_close,amount,volume`。
+  - 自动支持 `Accept-Encoding: gzip` 压缩（60 个交易日全市场仅 ~6MB，局域网毫秒级传输），供 Mac 端增量同步至本地 SQLite 离线库或直接做任意统计。
+- `GET /data/blocks` — 列出 `T0002/blocknew` 下所有自定义板块 `.blk` 名称
+- `GET /file?name=shs.tnf` — 下载白名单内的原始缓存/码表/自选文件（`zxg.blk`, `shs/szs/bjs.tnf` 等）
+- `POST /blk?name=ai_pick` — 将 Mac 端选出的 7 位代码列表回写为通达信自定义板块 `.blk`
 
-### 阶段 2：选股与板块闭环（规划）
-- `POST /api/screen` — 本地并发扫描全市场 `.day`，支持常用结构条件（连跌反包、放量突破、均线多头等），可选参数 `write_blk=ai_pick` 一键回写通达信自定义板块。
-- `GET /api/watchlist/stats` — 基于本地 `.day` 计算自选股近 5/20/60 日强弱与相对收益排行。
+## 4. 离线复盘工作流（Mac 端）
 
-### 阶段 3：性能与生态（规划）
-- 支持 `period=1m`（`.lc1`）及盘中分钟级异动扫描。
-- 统一 OpenAPI / MCP 封装，便于 AI 助手直接组合查询与复盘。
+```bash
+# 1. 盘后在通达信下载完日线数据后，一键增量同步至 Mac 本地 SQLite（~/.tdx_local_data/market.db）
+python3 tools/tdx_sync.py sync --days 120
+
+# 2. 之后随时可离线运行分析（即使关闭 Parallels Windows 虚拟机）
+python3 tools/tdx_sync.py breadth --days 20
+```

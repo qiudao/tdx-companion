@@ -15,7 +15,7 @@ import (
 	"unsafe"
 )
 
-const agentVersion = "1.1.0"
+const agentVersion = "2.0.0"
 
 var startTime = time.Now()
 
@@ -193,13 +193,17 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 
 func main() {
 	mux := http.NewServeMux()
+	// Control & file primitives
+	mux.HandleFunc("/health", handleHealth)
 	mux.HandleFunc("/status", handleStatus)
 	mux.HandleFunc("/switch", handleSwitch)
 	mux.HandleFunc("/file", handleFile)
 	mux.HandleFunc("/blk", handleWriteBlk)
-	mux.HandleFunc("/api/health", handleHealth)
-	mux.HandleFunc("/api/breadth", handleBreadth)
-	mux.HandleFunc("/api/kline", handleKline)
+
+	// Pure data primitives (zero business logic)
+	mux.HandleFunc("/data/bars", handleBars)
+	mux.HandleFunc("/data/cross-section", handleCrossSection)
+	mux.HandleFunc("/data/blocks", handleListBlocks)
 
 	_ = http.ListenAndServe("0.0.0.0:19876", mux)
 }
