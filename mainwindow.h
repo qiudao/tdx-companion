@@ -8,6 +8,7 @@
 #include <QMap>
 #include <QPoint>
 #include "tdxbridge.h"
+#include "hudoverlay.h"
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -19,6 +20,7 @@ protected:
     void mousePressEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
     void mouseReleaseEvent(QMouseEvent *event) override;
+    void closeEvent(QCloseEvent *event) override;
 
 private slots:
     void onActiveStockDetected(const QString &stockKey, const QString &stockName);
@@ -27,6 +29,7 @@ private slots:
     void onForceSyncCache();
     void onToggleAlwaysOnTop(bool checked);
     void onToggleFrameless(bool checked);
+    void onToggleHud(bool checked);
     void onTableContextMenu(const QPoint &pos);
 
 private:
@@ -38,6 +41,7 @@ private:
     void switchToPeer(const QString &peerKey);
 
     TdxBridge *m_bridge = nullptr;
+    HudOverlay *m_hud = nullptr;
     QTimer *m_autoTimer = nullptr;
 
     QString m_activeStockKey;
@@ -50,6 +54,7 @@ private:
     bool m_lockCategory = false;
     bool m_alwaysOnTop = false;
     bool m_frameless = false;
+    bool m_hudEnabled = true;
 
     // Frameless drag state
     bool m_dragging = false;
@@ -66,5 +71,6 @@ private:
     QPushButton *m_btnOnTop = nullptr;
     QPushButton *m_btnAuto = nullptr;
     QPushButton *m_btnFrameless = nullptr;
+    QPushButton *m_btnHud = nullptr;
     QTableWidget *m_peerTable = nullptr;
 };

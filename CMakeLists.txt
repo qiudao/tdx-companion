@@ -24,6 +24,8 @@ set(PROJECT_SOURCES
     main.cpp
     tdxbridge.h
     tdxbridge.cpp
+    hudoverlay.h
+    hudoverlay.cpp
     mainwindow.h
     mainwindow.cpp
 )
@@ -38,6 +40,7 @@ target_link_libraries(tdx_companion PRIVATE
     Qt${QT_VERSION_MAJOR}::Widgets
     Qt${QT_VERSION_MAJOR}::Network
     iconv
+    sqlite3
 )
 
 set_target_properties(tdx_companion PROPERTIES

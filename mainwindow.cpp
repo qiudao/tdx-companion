@@ -5,6 +5,7 @@
 #include <QHeaderView>
 #include <QKeyEvent>
 #include <QMouseEvent>
+#include <QCloseEvent>
 #include <QMenu>
 #include <QShortcut>
 #include <QScreen>
@@ -33,6 +34,22 @@ MainWindow::MainWindow(QWidget *parent)
     auto *scFrameless = new QShortcut(QKeySequence("Ctrl+B"), this);
     connect(scFrameless, &QShortcut::activated, this, [this]() {
         m_btnFrameless->setChecked(!m_btnFrameless->isChecked());
+    });
+
+    // Full-Screen Transparent Click-Through Car-HUD
+    m_hud = new HudOverlay(nullptr);
+    if (m_hudEnabled) m_hud->show();
+
+    auto *scHud = new QShortcut(QKeySequence("Ctrl+U"), this);
+    connect(scHud, &QShortcut::activated, this, [this]() {
+        m_btnHud->setChecked(!m_btnHud->isChecked());
+    });
+    auto *scHudAlpha = new QShortcut(QKeySequence("Ctrl+Shift+U"), this);
+    connect(scHudAlpha, &QShortcut::activated, this, [this]() {
+        if (m_hud) {
+            m_hud->cycleOpacity();
+            m_statusLbl->setText("HUD 透明度: " + m_hud->opacityLabel());
+        }
     });
 
     QTimer::singleShot(80, this, [this]() {
@@ -111,6 +128,12 @@ void MainWindow::setupUi() {
     m_btnFrameless->setToolTip("切换无边框嵌入模式 (⌘B) · 拖动顶部可移动");
     connect(m_btnFrameless, &QPushButton::toggled, this, &MainWindow::onToggleFrameless);
 
+    m_btnHud = new QPushButton("HUD");
+    m_btnHud->setCheckable(true);
+    m_btnHud->setChecked(m_hudEnabled);
+    m_btnHud->setToolTip("全屏透明穿透抬头显示 (⌘U 开关 · ⌘⇧U 调透明度)");
+    connect(m_btnHud, &QPushButton::toggled, this, &MainWindow::onToggleHud);
+
     auto *btnSync = new QPushButton("刷");
     btnSync->setToolTip("重新同步通达信自选股");
     connect(btnSync, &QPushButton::clicked, this, &MainWindow::onForceSyncCache);
@@ -120,6 +143,7 @@ void MainWindow::setupUi() {
     ctrlRow->addWidget(m_btnOnTop);
     ctrlRow->addWidget(m_btnAuto);
     ctrlRow->addWidget(m_btnFrameless);
+    ctrlRow->addWidget(m_btnHud);
     ctrlRow->addWidget(btnSync);
     root->addWidget(ctrlBar);
 
@@ -266,6 +290,26 @@ void MainWindow::onToggleFrameless(bool checked) {
     m_frameless = checked;
     m_btnFrameless->setText(checked ? "有框" : "无框");
     applyWindowFlags();
+}
+
+void MainWindow::onToggleHud(bool checked) {
+    m_hudEnabled = checked;
+    if (!m_hud) return;
+    if (checked) {
+        m_hud->reloadMarketBreadth();
+        m_hud->show();
+    } else {
+        m_hud->hide();
+    }
+}
+
+void MainWindow::closeEvent(QCloseEvent *event) {
+    if (m_hud) {
+        m_hud->close();
+        m_hud->deleteLater();
+        m_hud = nullptr;
+    }
+    QMainWindow::closeEvent(event);
 }
 
 void MainWindow::mousePressEvent(QMouseEvent *event) {
@@ -424,6 +468,21 @@ void MainWindow::rebuildPeerTable() {
     }
 
     if (activeRow >= 0) m_peerTable->selectRow(activeRow);
+
+    if (m_hud) {
+        HudSnapshot snap;
+        snap.stockKey = m_activeStockKey;
+        snap.stockName = m_activeStockKey.isEmpty() ? QString() : m_bridge->stockName(m_activeStockKey);
+        snap.category = m_curCategory;
+        snap.activeRank = activeRank;
+        snap.peerCount = list.size();
+        snap.avgPct = avg;
+        snap.upCnt = upCnt;
+        snap.downCnt = downCnt;
+        snap.limitUpCnt = limitUpCnt;
+        for (int i = 0; i < qMin(3, list.size()); ++i) snap.topLeaders.append(list[i]);
+        m_hud->updateSnapshot(snap);
+    }
 }
 
 void MainWindow::switchToPeer(const QString &peerKey) {
@@ -460,6 +519,15 @@ void MainWindow::onTableContextMenu(const QPoint &pos) {
     menu.addAction(m_frameless ? "恢复窗口边框 (⌘B)" : "无边框嵌入模式 (⌘B)", [this]() {
         m_btnFrameless->setChecked(!m_btnFrameless->isChecked());
     });
+    menu.addAction(m_hudEnabled ? "隐藏全屏 HUD (⌘U)" : "显示全屏 HUD (⌘U)", [this]() {
+        m_btnHud->setChecked(!m_btnHud->isChecked());
+    });
+    if (m_hud) {
+        menu.addAction(QString("切换 HUD 透明度 [当前:%1] (⌘⇧U)").arg(m_hud->opacityLabel()), [this]() {
+            m_hud->cycleOpacity();
+            m_statusLbl->setText("HUD 透明度: " + m_hud->opacityLabel());
+        });
+    }
     menu.addAction(m_alwaysOnTop ? "取消置顶" : "窗口置顶", [this]() {
         m_btnOnTop->setChecked(!m_btnOnTop->isChecked());
     });
