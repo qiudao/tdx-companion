@@ -172,8 +172,8 @@ void HudOverlay::paintEvent(QPaintEvent *) {
     const int H = height();
     const int bgAlpha = static_cast<int>(255 * m_opacity);
 
-    // Covers only the 2nd (unused) Volume sub-chart + bottom indicator/news/status strips (~18% of workspace height)
-    const int barH = qBound(142, static_cast<int>(H * 0.180), 172);
+    // Covers only the 2nd (unused) Volume sub-chart + bottom indicator/news/status strips (~15.8% of workspace height)
+    const int barH = qBound(126, static_cast<int>(H * 0.158), 148);
     const int topY = H - barH;
 
     // 1. Native TDX pure black canvas + classic dark-red 1px borders
@@ -218,7 +218,7 @@ void HudOverlay::paintEvent(QPaintEvent *) {
         // Summary metrics row
         p.setFont(fBody);
         p.setPen(QColor(210, 210, 210));
-        p.drawText(QRectF(10, topY + 29, div1 - 20, 20), Qt::AlignLeft | Qt::AlignVCenter,
+        p.drawText(QRectF(10, topY + 26, div1 - 20, 18), Qt::AlignLeft | Qt::AlignVCenter,
                    QString("下跌占比 %1%   涨跌中位 %2%3%   跌超5%: %4 家")
                        .arg(last.downPct, 0, 'f', 1)
                        .arg(last.medianPct > 0 ? "+" : "").arg(last.medianPct, 0, 'f', 2)
@@ -227,8 +227,8 @@ void HudOverlay::paintEvent(QPaintEvent *) {
         // 20-day bar chart
         const double chartL = 38.0;
         const double chartR = div1 - 12.0;
-        const double chartT = topY + 56.0;
-        const double chartB = H - 20.0;
+        const double chartT = topY + 48.0;
+        const double chartB = H - 17.0;
         const double chartW = qMax(60.0, chartR - chartL);
         const double chartH = qMax(40.0, chartB - chartT);
 
@@ -301,28 +301,28 @@ void HudOverlay::paintEvent(QPaintEvent *) {
             // Row 1: Big Drawdown highlight
             p.setFont(fBig);
             p.setPen(cy.drawdownPct <= -40.0 ? QColor(0, 230, 0) : QColor(255, 215, 0));
-            p.drawText(QRectF(x0, topY + 28, cw, 22), Qt::AlignLeft | Qt::AlignVCenter,
+            p.drawText(QRectF(x0, topY + 26, cw, 20), Qt::AlignLeft | Qt::AlignVCenter,
                        QString("6月高点回撤: %1%").arg(cy.drawdownPct, 0, 'f', 1));
 
             // Row 2: Peak & Low prices
             p.setFont(fBody);
             p.setPen(QColor(210, 210, 210));
-            p.drawText(QRectF(x0, topY + 54, cw, 19), Qt::AlignLeft | Qt::AlignVCenter,
+            p.drawText(QRectF(x0, topY + 48, cw, 18), Qt::AlignLeft | Qt::AlignVCenter,
                        QString("区间高: %1 (%2)   区间低: %3 (%4)")
                            .arg(cy.peakHigh, 0, 'f', 2).arg(pkMd)
                            .arg(cy.rangeLow, 0, 'f', 2).arg(loMd));
 
             // Row 3: 5d / 20d / MA20 bias
             p.setPen(QColor(185, 185, 185));
-            p.drawText(QRectF(x0, topY + 76, cw, 19), Qt::AlignLeft | Qt::AlignVCenter,
+            p.drawText(QRectF(x0, topY + 68, cw, 18), Qt::AlignLeft | Qt::AlignVCenter,
                        QString("5日: %1%2%   20日: %3%4%   距MA20: %5%6%")
                            .arg(cy.chg5dPct > 0 ? "+" : "").arg(cy.chg5dPct, 0, 'f', 1)
                            .arg(cy.chg20dPct > 0 ? "+" : "").arg(cy.chg20dPct, 0, 'f', 1)
                            .arg(cy.ma20BiasPct > 0 ? "+" : "").arg(cy.ma20BiasPct, 0, 'f', 1));
 
             // Row 4: Native TDX horizontal position gauge (Low -> Current -> High)
-            const double gaugeY = topY + 104.0;
-            const double gaugeH = 11.0;
+            const double gaugeY = topY + 92.0;
+            const double gaugeH = 10.0;
             p.fillRect(QRectF(x0, gaugeY, cw, gaugeH), QColor(28, 28, 28));
             p.setPen(QPen(QColor(90, 0, 0), 1.0));
             p.drawRect(QRectF(x0, gaugeY, cw, gaugeH));

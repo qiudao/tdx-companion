@@ -303,6 +303,29 @@ void MainWindow::onToggleHud(bool checked) {
     }
 }
 
+void MainWindow::showEvent(QShowEvent *event) {
+    QMainWindow::showEvent(event);
+    if (m_hud && m_hudEnabled && !isMinimized()) {
+        m_hud->show();
+    }
+}
+
+void MainWindow::hideEvent(QHideEvent *event) {
+    QMainWindow::hideEvent(event);
+    if (m_hud) m_hud->hide();
+}
+
+void MainWindow::changeEvent(QEvent *event) {
+    QMainWindow::changeEvent(event);
+    if (event->type() == QEvent::WindowStateChange && m_hud) {
+        if (isMinimized()) {
+            m_hud->hide();
+        } else if (m_hudEnabled && isVisible()) {
+            m_hud->show();
+        }
+    }
+}
+
 void MainWindow::closeEvent(QCloseEvent *event) {
     if (m_hud) {
         m_hud->close();
