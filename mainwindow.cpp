@@ -19,7 +19,7 @@ MainWindow::MainWindow(QWidget *parent)
     applyTdxClassicTheme();
 
     const QRect avail = QGuiApplication::primaryScreen()->availableGeometry();
-    setGeometry(avail.left(), avail.top(), 220, avail.height());
+    setGeometry(avail.right() - 220 + 1, avail.top(), 220, avail.height());
 
     connect(m_bridge, &TdxBridge::activeStockDetected, this, &MainWindow::onActiveStockDetected);
     connect(m_bridge, &TdxBridge::quotesBatchReady, this, &MainWindow::onQuotesBatchReady);

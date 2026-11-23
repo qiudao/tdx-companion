@@ -21,8 +21,8 @@ HudOverlay::HudOverlay(QWidget *parent) : QWidget(parent) {
     setFocusPolicy(Qt::NoFocus);
 
     const QRect avail = QGuiApplication::primaryScreen()->availableGeometry();
-    // Cover the entire workspace area to the right of the 220px companion strip
-    setGeometry(avail.left() + 224, avail.top(), avail.width() - 224, avail.height());
+    // Cover the entire workspace area to the left of the right-docked 220px companion strip
+    setGeometry(avail.left(), avail.top(), avail.width() - 224, avail.height());
 
     reloadMarketBreadth();
 }
