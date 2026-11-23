@@ -55,7 +55,7 @@ private:
 
     bool m_followEnabled = true;
     bool m_lockCategory = false;
-    bool m_alwaysOnTop = false;
+    bool m_alwaysOnTop = true;
     bool m_frameless = false;
     bool m_hudEnabled = true;
 

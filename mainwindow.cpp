@@ -19,6 +19,7 @@ MainWindow::MainWindow(QWidget *parent)
     applyTdxClassicTheme();
 
     const QRect avail = QGuiApplication::primaryScreen()->availableGeometry();
+    if (m_alwaysOnTop) setWindowFlag(Qt::WindowStaysOnTopHint, true);
     setGeometry(avail.right() - 220 + 1, avail.top(), 220, avail.height());
 
     connect(m_bridge, &TdxBridge::activeStockDetected, this, &MainWindow::onActiveStockDetected);
@@ -113,7 +114,8 @@ void MainWindow::setupUi() {
 
     m_btnOnTop = new QPushButton("顶");
     m_btnOnTop->setCheckable(true);
-    m_btnOnTop->setToolTip("窗口置顶");
+    m_btnOnTop->setChecked(m_alwaysOnTop);
+    m_btnOnTop->setToolTip("窗口与底栏 HUD 同步置顶");
     connect(m_btnOnTop, &QPushButton::toggled, this, &MainWindow::onToggleAlwaysOnTop);
 
     m_btnAuto = new QPushButton("5s");
@@ -283,6 +285,7 @@ void MainWindow::applyWindowFlags() {
 
 void MainWindow::onToggleAlwaysOnTop(bool checked) {
     m_alwaysOnTop = checked;
+    if (m_hud) m_hud->setAlwaysOnTop(checked);
     applyWindowFlags();
 }
 

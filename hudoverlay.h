@@ -54,6 +54,7 @@ public:
     void cycleOpacity();
     double hudOpacity() const { return m_opacity; }
     QString opacityLabel() const;
+    void setAlwaysOnTop(bool onTop);
 
 protected:
     void paintEvent(QPaintEvent *event) override;

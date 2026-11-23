@@ -43,6 +43,20 @@ QString HudOverlay::opacityLabel() const {
     return "原生不透明";
 }
 
+void HudOverlay::setAlwaysOnTop(bool onTop) {
+    const bool wasVisible = isVisible();
+    Qt::WindowFlags f = Qt::Window
+                        | Qt::FramelessWindowHint
+                        | Qt::WindowTransparentForInput
+                        | Qt::WindowDoesNotAcceptFocus;
+    if (onTop) f |= Qt::WindowStaysOnTopHint;
+    setWindowFlags(f);
+    setAttribute(Qt::WA_TranslucentBackground, true);
+    setAttribute(Qt::WA_TransparentForMouseEvents, true);
+    setAttribute(Qt::WA_ShowWithoutActivating, true);
+    if (wasVisible) show();
+}
+
 void HudOverlay::updateSnapshot(const HudSnapshot &snap) {
     m_snap = snap;
     if (!m_snap.stockKey.isEmpty() && !m_snap.cycle.valid) {
@@ -172,8 +186,8 @@ void HudOverlay::paintEvent(QPaintEvent *) {
     const int H = height();
     const int bgAlpha = static_cast<int>(255 * m_opacity);
 
-    // Covers only the 2nd (unused) Volume sub-chart + bottom indicator/news/status strips (~15.8% of workspace height)
-    const int barH = qBound(126, static_cast<int>(H * 0.158), 148);
+    // Covers the 2nd (unused) Volume sub-chart (including its header line) + bottom indicator/news/status strips (~17.2%)
+    const int barH = qBound(140, static_cast<int>(H * 0.172), 160);
     const int topY = H - barH;
 
     // 1. Native TDX pure black canvas + classic dark-red 1px borders
