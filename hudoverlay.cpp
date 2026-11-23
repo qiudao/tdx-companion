@@ -169,8 +169,8 @@ void HudOverlay::reloadMarketBreadth() {
 void HudOverlay::drawPill(QPainter &p, const QRectF &rect, const QColor &accent) const {
     QPainterPath path;
     path.addRoundedRect(rect, 4, 4);
-    p.fillPath(path, QColor(0, 8, 12, static_cast<int>(145 * m_opacity)));
-    QPen pen(QColor(accent.red(), accent.green(), accent.blue(), static_cast<int>(180 * m_opacity)), 1.0);
+    p.fillPath(path, QColor(4, 10, 16, static_cast<int>(210 * m_opacity)));
+    QPen pen(QColor(accent.red(), accent.green(), accent.blue(), static_cast<int>(190 * m_opacity)), 1.0);
     p.setPen(pen);
     p.drawPath(path);
 }
@@ -184,40 +184,39 @@ void HudOverlay::paintEvent(QPaintEvent *) {
     const int H = height();
     const int alphaText = static_cast<int>(255 * m_opacity);
 
-    // Subtle AR-HUD corner reticle brackets
-    const QColor hudCyan(0, 229, 255, static_cast<int>(110 * m_opacity));
-    p.setPen(QPen(hudCyan, 1.2));
-    const int m = 8, L = 18;
-    p.drawLine(m, m, m + L, m); p.drawLine(m, m, m, m + L);
-    p.drawLine(W - m, m, W - m - L, m); p.drawLine(W - m, m, W - m, m + L);
-    p.drawLine(m, H - m, m + L, H - m); p.drawLine(m, H - m, m, H - m - L);
-    p.drawLine(W - m, H - m, W - m - L, H - m); p.drawLine(W - m, H - m, W - m, H - m - L);
+    // Subtle AR-HUD corner reticle brackets (inset below TDX top menu & above bottom news bar)
+    const int topSafe = 82;
+    const int bottomSafe = H - 102;
+    const QColor hudCyan(0, 229, 255, static_cast<int>(90 * m_opacity));
+    p.setPen(QPen(hudCyan, 1.0));
+    const int m = 8, L = 14;
+    p.drawLine(m, topSafe, m + L, topSafe); p.drawLine(m, topSafe, m, topSafe + L);
+    p.drawLine(m, bottomSafe, m + L, bottomSafe); p.drawLine(m, bottomSafe, m, bottomSafe - L);
 
-    QFont fTitle("PingFang SC", 13, QFont::Bold);
-    QFont fBody("Menlo", 11);
+    QFont fTitle("PingFang SC", 12, QFont::Bold);
     QFont fSmall("PingFang SC", 10);
 
-    // 1. TOP-LEFT HUD: Active Stock + Category Rank + Top 3 Leaders
+    // 1. UPPER-LEFT K-LINE EMPTY ZONE (y = 88): Active Stock + Category Rank + Top 3 Leaders
     if (!m_snap.stockKey.isEmpty()) {
-        const QRectF tl(16, 14, 430, 62);
+        const QRectF tl(16, topSafe + 6, 430, 58);
         const QColor accent = m_snap.avgPct >= 0 ? QColor(255, 68, 68) : QColor(0, 230, 118);
         drawPill(p, tl, accent);
 
         p.setFont(fTitle);
         p.setPen(QColor(255, 240, 0, alphaText));
         const QString titleStr = QString("%1 %2").arg(m_snap.stockName, m_snap.stockKey.mid(1));
-        p.drawText(QRectF(tl.left() + 10, tl.top() + 6, 175, 24), Qt::AlignLeft | Qt::AlignVCenter, titleStr);
+        p.drawText(QRectF(tl.left() + 10, tl.top() + 5, 175, 22), Qt::AlignLeft | Qt::AlignVCenter, titleStr);
 
         p.setPen(QColor(0, 229, 255, alphaText));
         const QString catStr = QString("[%1]  同类第%2/%3")
             .arg(m_snap.category)
             .arg(m_snap.activeRank > 0 ? QString::number(m_snap.activeRank) : "-")
             .arg(m_snap.peerCount);
-        p.drawText(QRectF(tl.left() + 185, tl.top() + 6, 235, 24), Qt::AlignRight | Qt::AlignVCenter, catStr);
+        p.drawText(QRectF(tl.left() + 185, tl.top() + 5, 235, 22), Qt::AlignRight | Qt::AlignVCenter, catStr);
 
         // Line 2: Category average + Top 3 leaders
         p.setFont(fSmall);
-        p.setPen(m_snap.avgPct >= 0 ? QColor(255, 82, 82, alphaText) : QColor(0, 230, 118, alphaText));
+        p.setPen(m_snap.avgPct >= 0 ? QColor(255, 110, 110, alphaText) : QColor(0, 230, 118, alphaText));
         QString leadersStr;
         for (int i = 0; i < qMin(3, m_snap.topLeaders.size()); ++i) {
             const auto &ld = m_snap.topLeaders[i];
@@ -230,12 +229,14 @@ void HudOverlay::paintEvent(QPaintEvent *) {
             .arg(m_snap.upCnt)
             .arg(m_snap.downCnt)
             .arg(leadersStr);
-        p.drawText(QRectF(tl.left() + 10, tl.top() + 33, tl.width() - 20, 22), Qt::AlignLeft | Qt::AlignVCenter, line2);
+        p.drawText(QRectF(tl.left() + 10, tl.top() + 31, tl.width() - 20, 20), Qt::AlignLeft | Qt::AlignVCenter, line2);
     }
 
-    // 2. TOP-RIGHT HUD: Cycle Position (Drawdown from June peak, 5d/20d, MA20 bias)
+    // 2. NEXT TO PILL 1 (or stacked cleanly below if narrow): Cycle Position — stays left of TDX Level-2 order book
     if (m_snap.cycle.valid) {
-        const QRectF tr(W - 350, 14, 334, 62);
+        const double trX = (W >= 1060) ? 456.0 : 16.0;
+        const double trY = (W >= 1060) ? (topSafe + 6) : (topSafe + 70);
+        const QRectF tr(trX, trY, 326, 58);
         const QColor ddAccent = m_snap.cycle.drawdownPct <= -50.0 ? QColor(0, 229, 255) : QColor(255, 193, 7);
         drawPill(p, tr, ddAccent);
 
@@ -243,11 +244,11 @@ void HudOverlay::paintEvent(QPaintEvent *) {
         p.setPen(QColor(255, 255, 255, alphaText));
         const QString peakDateStr = QString::number(m_snap.cycle.peakDate);
         const QString shortDate = peakDateStr.size() == 8 ? (peakDateStr.mid(4, 2) + "-" + peakDateStr.mid(6, 2)) : peakDateStr;
-        p.drawText(QRectF(tr.left() + 10, tr.top() + 6, 175, 24), Qt::AlignLeft | Qt::AlignVCenter,
+        p.drawText(QRectF(tr.left() + 10, tr.top() + 5, 170, 22), Qt::AlignLeft | Qt::AlignVCenter,
                    QString("高点 %1 (%2)").arg(m_snap.cycle.peakHigh, 0, 'f', 2).arg(shortDate));
 
         p.setPen(m_snap.cycle.drawdownPct <= -40.0 ? QColor(0, 230, 118, alphaText) : QColor(255, 213, 79, alphaText));
-        p.drawText(QRectF(tr.left() + 185, tr.top() + 6, 140, 24), Qt::AlignRight | Qt::AlignVCenter,
+        p.drawText(QRectF(tr.left() + 180, tr.top() + 5, 136, 22), Qt::AlignRight | Qt::AlignVCenter,
                    QString("回撤 %1%").arg(m_snap.cycle.drawdownPct, 0, 'f', 1));
 
         p.setFont(fSmall);
@@ -256,21 +257,21 @@ void HudOverlay::paintEvent(QPaintEvent *) {
             .arg(m_snap.cycle.chg5dPct > 0 ? "+" : "").arg(m_snap.cycle.chg5dPct, 0, 'f', 1)
             .arg(m_snap.cycle.chg20dPct > 0 ? "+" : "").arg(m_snap.cycle.chg20dPct, 0, 'f', 1)
             .arg(m_snap.cycle.ma20BiasPct > 0 ? "+" : "").arg(m_snap.cycle.ma20BiasPct, 0, 'f', 1);
-        p.drawText(QRectF(tr.left() + 10, tr.top() + 33, tr.width() - 20, 22), Qt::AlignLeft | Qt::AlignVCenter, line2);
+        p.drawText(QRectF(tr.left() + 10, tr.top() + 31, tr.width() - 20, 20), Qt::AlignLeft | Qt::AlignVCenter, line2);
     }
 
-    // 3. BOTTOM-RIGHT HUD: Market Breadth & 10-Day Declining Stocks Sparkline
+    // 3. BOTTOM-LEFT ABOVE TDX INDICATOR/NEWS BAR: Market Breadth & 10-Day Declining Stocks Sparkline
     if (!m_breadth.isEmpty()) {
         const auto &last = m_breadth.last();
-        const QRectF br(W - 410, H - 78, 394, 62);
+        const QRectF br(16, bottomSafe - 62, 394, 58);
         const bool isIce = (last.down >= 4500);
         const QColor bAccent = isIce ? QColor(0, 230, 118) : (last.down >= 3500 ? QColor(255, 179, 0) : QColor(255, 82, 82));
         drawPill(p, br, bAccent);
 
         // Mini 10-day bar chart on left side of pill
         const double chartX = br.left() + 10;
-        const double chartY = br.top() + 10;
-        const double chartH = 42.0;
+        const double chartY = br.top() + 9;
+        const double chartH = 40.0;
         const double barW = 8.0;
         const double gap = 3.0;
         for (int i = 0; i < m_breadth.size(); ++i) {
@@ -290,12 +291,12 @@ void HudOverlay::paintEvent(QPaintEvent *) {
 
         p.setFont(fTitle);
         p.setPen(QColor(bAccent.red(), bAccent.green(), bAccent.blue(), alphaText));
-        p.drawText(QRectF(tx, br.top() + 6, tw, 24), Qt::AlignLeft | Qt::AlignVCenter,
+        p.drawText(QRectF(tx, br.top() + 5, tw, 22), Qt::AlignLeft | Qt::AlignVCenter,
                    QString("全市场(%1) 跌%2 [%3]").arg(md).arg(last.down).arg(badge));
 
         p.setFont(fSmall);
         p.setPen(QColor(215, 225, 235, alphaText));
-        p.drawText(QRectF(tx, br.top() + 33, tw, 22), Qt::AlignLeft | Qt::AlignVCenter,
+        p.drawText(QRectF(tx, br.top() + 31, tw, 20), Qt::AlignLeft | Qt::AlignVCenter,
                    QString("跌比%1%  中位%2%3%  跌>5%%4家")
                        .arg(last.downPct, 0, 'f', 1)
                        .arg(last.medianPct > 0 ? "+" : "").arg(last.medianPct, 0, 'f', 2)
