@@ -481,6 +481,10 @@ void MainWindow::rebuildPeerTable() {
         snap.downCnt = downCnt;
         snap.limitUpCnt = limitUpCnt;
         for (int i = 0; i < qMin(3, list.size()); ++i) snap.topLeaders.append(list[i]);
+        if (list.size() > 3) {
+            const int lagStart = qMax(3, list.size() - 2);
+            for (int i = list.size() - 1; i >= lagStart; --i) snap.bottomLaggards.append(list[i]);
+        }
         m_hud->updateSnapshot(snap);
     }
 }

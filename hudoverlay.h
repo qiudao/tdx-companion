@@ -9,6 +9,8 @@ struct StockCycleInfo {
     bool valid = false;
     double peakHigh = 0.0;
     int peakDate = 0;
+    double rangeLow = 0.0;
+    int lowDate = 0;
     double curClose = 0.0;
     double drawdownPct = 0.0;
     double chg5dPct = 0.0;
@@ -35,7 +37,8 @@ struct HudSnapshot {
     int upCnt = 0;
     int downCnt = 0;
     int limitUpCnt = 0;
-    QVector<PeerQuote> topLeaders; // Top 3 peers in category
+    QVector<PeerQuote> topLeaders;    // Top 3 peers
+    QVector<PeerQuote> bottomLaggards; // Bottom 2 peers
     StockCycleInfo cycle;
 };
 
@@ -57,10 +60,9 @@ protected:
 
 private:
     QString dbPath() const;
-    void drawPill(QPainter &p, const QRectF &rect, const QColor &accent) const;
 
     HudSnapshot m_snap;
-    QVector<BreadthDayInfo> m_breadth; // last 10 trading days
-    double m_opacity = 0.72;
-    int m_opacityIdx = 1; // 0=淡(0.45), 1=中(0.72), 2=强(0.92)
+    QVector<BreadthDayInfo> m_breadth; // last 20 trading days
+    double m_opacity = 1.0;
+    int m_opacityIdx = 2; // 0=半透(0.75), 1=高透(0.90), 2=原生不透明(1.0)
 };

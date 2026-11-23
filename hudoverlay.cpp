@@ -4,7 +4,6 @@
 #include <QFile>
 #include <QGuiApplication>
 #include <QPainter>
-#include <QPainterPath>
 #include <QScreen>
 #include <algorithm>
 #include <sqlite3.h>
@@ -21,8 +20,8 @@ HudOverlay::HudOverlay(QWidget *parent) : QWidget(parent) {
     setFocusPolicy(Qt::NoFocus);
 
     const QRect avail = QGuiApplication::primaryScreen()->availableGeometry();
-    // Cover the entire workspace area to the left of the right-docked 220px companion strip
-    setGeometry(avail.left(), avail.top(), avail.width() - 224, avail.height());
+    // Cover the workspace to the left of the right-docked 220px companion strip
+    setGeometry(avail.left(), avail.top(), avail.width() - 222, avail.height());
 
     reloadMarketBreadth();
 }
@@ -32,16 +31,16 @@ QString HudOverlay::dbPath() const {
 }
 
 void HudOverlay::cycleOpacity() {
-    static const double levels[3] = {0.42, 0.72, 0.92};
+    static const double levels[3] = {0.75, 0.90, 1.0};
     m_opacityIdx = (m_opacityIdx + 1) % 3;
     m_opacity = levels[m_opacityIdx];
     update();
 }
 
 QString HudOverlay::opacityLabel() const {
-    if (m_opacityIdx == 0) return "极淡";
-    if (m_opacityIdx == 1) return "标准";
-    return "高对比";
+    if (m_opacityIdx == 0) return "半透明";
+    if (m_opacityIdx == 1) return "微透";
+    return "原生不透明";
 }
 
 void HudOverlay::updateSnapshot(const HudSnapshot &snap) {
@@ -63,16 +62,17 @@ StockCycleInfo HudOverlay::queryStockCycle(const QString &stockKey) const {
         return info;
     }
 
-    const char *sql = "SELECT date, high, close FROM daily_bars WHERE key=? AND date >= 20260620 ORDER BY date ASC";
+    const char *sql = "SELECT date, high, low, close FROM daily_bars WHERE key=? AND date >= 20260620 ORDER BY date ASC";
     sqlite3_stmt *stmt = nullptr;
     QVector<int> dates;
-    QVector<double> highs, closes;
+    QVector<double> highs, lows, closes;
     if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) == SQLITE_OK) {
         sqlite3_bind_text(stmt, 1, stockKey.toUtf8().constData(), -1, SQLITE_TRANSIENT);
         while (sqlite3_step(stmt) == SQLITE_ROW) {
             dates.append(sqlite3_column_int(stmt, 0));
             highs.append(sqlite3_column_double(stmt, 1));
-            closes.append(sqlite3_column_double(stmt, 2));
+            lows.append(sqlite3_column_double(stmt, 2));
+            closes.append(sqlite3_column_double(stmt, 3));
         }
         sqlite3_finalize(stmt);
     }
@@ -82,25 +82,22 @@ StockCycleInfo HudOverlay::queryStockCycle(const QString &stockKey) const {
 
     info.valid = true;
     info.curClose = closes.last();
-    double maxH = -1.0;
-    int maxD = 0;
+    double maxH = -1.0, minL = 1e12;
+    int maxD = 0, minD = 0;
     for (int i = 0; i < highs.size(); ++i) {
-        if (highs[i] > maxH) {
-            maxH = highs[i];
-            maxD = dates[i];
-        }
+        if (highs[i] > maxH) { maxH = highs[i]; maxD = dates[i]; }
+        if (lows[i] > 0 && lows[i] < minL) { minL = lows[i]; minD = dates[i]; }
     }
     info.peakHigh = maxH;
     info.peakDate = maxD;
+    info.rangeLow = (minL < 1e11) ? minL : info.curClose;
+    info.lowDate = minD;
     if (maxH > 0) info.drawdownPct = (info.curClose - maxH) / maxH * 100.0;
 
     const int n = closes.size();
-    if (n >= 6 && closes[n - 6] > 0) {
-        info.chg5dPct = (info.curClose - closes[n - 6]) / closes[n - 6] * 100.0;
-    }
-    if (n >= 21 && closes[n - 21] > 0) {
-        info.chg20dPct = (info.curClose - closes[n - 21]) / closes[n - 21] * 100.0;
-    }
+    if (n >= 6 && closes[n - 6] > 0) info.chg5dPct = (info.curClose - closes[n - 6]) / closes[n - 6] * 100.0;
+    if (n >= 21 && closes[n - 21] > 0) info.chg20dPct = (info.curClose - closes[n - 21]) / closes[n - 21] * 100.0;
+
     const int maN = qMin(20, n);
     double sum = 0.0;
     for (int i = n - maN; i < n; ++i) sum += closes[i];
@@ -122,7 +119,7 @@ void HudOverlay::reloadMarketBreadth() {
 
     QVector<int> dates;
     {
-        const char *sql = "SELECT date FROM daily_bars GROUP BY date HAVING COUNT(*) >= 1000 ORDER BY date DESC LIMIT 10";
+        const char *sql = "SELECT date FROM daily_bars GROUP BY date HAVING COUNT(*) >= 1000 ORDER BY date DESC LIMIT 20";
         sqlite3_stmt *stmt = nullptr;
         if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) == SQLITE_OK) {
             while (sqlite3_step(stmt) == SQLITE_ROW) dates.append(sqlite3_column_int(stmt, 0));
@@ -166,15 +163,6 @@ void HudOverlay::reloadMarketBreadth() {
     update();
 }
 
-void HudOverlay::drawPill(QPainter &p, const QRectF &rect, const QColor &accent) const {
-    QPainterPath path;
-    path.addRoundedRect(rect, 4, 4);
-    p.fillPath(path, QColor(4, 10, 16, static_cast<int>(210 * m_opacity)));
-    QPen pen(QColor(accent.red(), accent.green(), accent.blue(), static_cast<int>(190 * m_opacity)), 1.0);
-    p.setPen(pen);
-    p.drawPath(path);
-}
-
 void HudOverlay::paintEvent(QPaintEvent *) {
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing, true);
@@ -182,200 +170,229 @@ void HudOverlay::paintEvent(QPaintEvent *) {
 
     const int W = width();
     const int H = height();
-    const int alphaText = static_cast<int>(255 * m_opacity);
+    const int bgAlpha = static_cast<int>(255 * m_opacity);
 
-    // Subtle AR-HUD corner reticle brackets (inset below TDX top menu & above bottom news bar)
-    const int topSafe = 82;
-    const int bottomSafe = H - 102;
-    const QColor hudCyan(0, 229, 255, static_cast<int>(90 * m_opacity));
-    p.setPen(QPen(hudCyan, 1.0));
-    const int m = 8, L = 14;
-    p.drawLine(m, topSafe, m + L, topSafe); p.drawLine(m, topSafe, m, topSafe + L);
-    p.drawLine(m, bottomSafe, m + L, bottomSafe); p.drawLine(m, bottomSafe, m, bottomSafe - L);
+    // Covers the 2nd (unused) Volume sub-chart + bottom indicator/news/status strips (~23% of screen height)
+    const int barH = qBound(175, static_cast<int>(H * 0.235), 230);
+    const int topY = H - barH;
 
-    QFont fTitle("PingFang SC", 12, QFont::Bold);
-    QFont fSmall("PingFang SC", 10);
+    // 1. Native TDX pure black canvas + classic dark-red 1px borders
+    p.fillRect(QRectF(0, topY, W, barH), QColor(0, 0, 0, bgAlpha));
+    p.fillRect(QRectF(0, topY, W, 24), QColor(16, 0, 0, bgAlpha)); // TDX dark-red header strip
 
-    // 1. UPPER-LEFT K-LINE EMPTY ZONE (y = 88): Active Stock + Category Rank + Top 3 Leaders
-    if (!m_snap.stockKey.isEmpty()) {
-        const QRectF tl(16, topSafe + 6, 430, 58);
-        const QColor accent = m_snap.avgPct >= 0 ? QColor(255, 68, 68) : QColor(0, 230, 118);
-        drawPill(p, tl, accent);
+    p.setPen(QPen(QColor(135, 0, 0, bgAlpha), 1.0));
+    p.drawLine(0, topY, W, topY);
+    p.setPen(QPen(QColor(90, 0, 0, bgAlpha), 1.0));
+    p.drawLine(0, topY + 24, W, topY + 24);
+    p.drawLine(W - 1, topY, W - 1, H);
 
-        p.setFont(fTitle);
-        p.setPen(QColor(255, 240, 0, alphaText));
-        const QString titleStr = QString("%1 %2").arg(m_snap.stockName, m_snap.stockKey.mid(1));
-        p.drawText(QRectF(tl.left() + 10, tl.top() + 5, 175, 22), Qt::AlignLeft | Qt::AlignVCenter, titleStr);
+    // 3 balanced columns
+    const int div1 = static_cast<int>(W * 0.44);
+    const int div2 = static_cast<int>(W * 0.72);
+    p.setPen(QPen(QColor(110, 0, 0, bgAlpha), 1.0));
+    p.drawLine(div1, topY, div1, H);
+    p.drawLine(div2, topY, div2, H);
 
-        p.setPen(QColor(0, 229, 255, alphaText));
-        const QString catStr = QString("[%1]  同类第%2/%3")
-            .arg(m_snap.category)
-            .arg(m_snap.activeRank > 0 ? QString::number(m_snap.activeRank) : "-")
-            .arg(m_snap.peerCount);
-        p.drawText(QRectF(tl.left() + 185, tl.top() + 5, 235, 22), Qt::AlignRight | Qt::AlignVCenter, catStr);
+    QFont fHdr("PingFang SC", 11, QFont::Bold);
+    QFont fBig("PingFang SC", 13, QFont::Bold);
+    QFont fBody("PingFang SC", 11);
+    QFont fTiny("Menlo", 9);
 
-        // Line 2: Category average + Top 3 leaders
-        p.setFont(fSmall);
-        p.setPen(m_snap.avgPct >= 0 ? QColor(255, 110, 110, alphaText) : QColor(0, 230, 118, alphaText));
-        QString leadersStr;
-        for (int i = 0; i < qMin(3, m_snap.topLeaders.size()); ++i) {
-            const auto &ld = m_snap.topLeaders[i];
-            if (i > 0) leadersStr += " · ";
-            leadersStr += QString("%1 %2%3%").arg(ld.name, ld.pct > 0 ? "+" : "").arg(ld.pct, 0, 'f', 1);
-        }
-        const QString line2 = QString("均%1%2% (%3涨/%4跌)  领涨: %5")
-            .arg(m_snap.avgPct > 0 ? "+" : "")
-            .arg(m_snap.avgPct, 0, 'f', 2)
-            .arg(m_snap.upCnt)
-            .arg(m_snap.downCnt)
-            .arg(leadersStr);
-        p.drawText(QRectF(tl.left() + 10, tl.top() + 31, tl.width() - 20, 20), Qt::AlignLeft | Qt::AlignVCenter, line2);
-    }
-
-    // 2. NEXT TO PILL 1 (or stacked cleanly below if narrow): Cycle Position — stays left of TDX Level-2 order book
-    if (m_snap.cycle.valid) {
-        const double trX = (W >= 1060) ? 456.0 : 16.0;
-        const double trY = (W >= 1060) ? (topSafe + 6) : (topSafe + 70);
-        const QRectF tr(trX, trY, 326, 58);
-        const QColor ddAccent = m_snap.cycle.drawdownPct <= -50.0 ? QColor(0, 229, 255) : QColor(255, 193, 7);
-        drawPill(p, tr, ddAccent);
-
-        p.setFont(fTitle);
-        p.setPen(QColor(255, 255, 255, alphaText));
-        const QString peakDateStr = QString::number(m_snap.cycle.peakDate);
-        const QString shortDate = peakDateStr.size() == 8 ? (peakDateStr.mid(4, 2) + "-" + peakDateStr.mid(6, 2)) : peakDateStr;
-        p.drawText(QRectF(tr.left() + 10, tr.top() + 5, 170, 22), Qt::AlignLeft | Qt::AlignVCenter,
-                   QString("高点 %1 (%2)").arg(m_snap.cycle.peakHigh, 0, 'f', 2).arg(shortDate));
-
-        p.setPen(m_snap.cycle.drawdownPct <= -40.0 ? QColor(0, 230, 118, alphaText) : QColor(255, 213, 79, alphaText));
-        p.drawText(QRectF(tr.left() + 180, tr.top() + 5, 136, 22), Qt::AlignRight | Qt::AlignVCenter,
-                   QString("回撤 %1%").arg(m_snap.cycle.drawdownPct, 0, 'f', 1));
-
-        p.setFont(fSmall);
-        p.setPen(QColor(210, 225, 235, alphaText));
-        const QString line2 = QString("5日 %1%2%   20日 %3%4%   距MA20 %5%6%")
-            .arg(m_snap.cycle.chg5dPct > 0 ? "+" : "").arg(m_snap.cycle.chg5dPct, 0, 'f', 1)
-            .arg(m_snap.cycle.chg20dPct > 0 ? "+" : "").arg(m_snap.cycle.chg20dPct, 0, 'f', 1)
-            .arg(m_snap.cycle.ma20BiasPct > 0 ? "+" : "").arg(m_snap.cycle.ma20BiasPct, 0, 'f', 1);
-        p.drawText(QRectF(tr.left() + 10, tr.top() + 31, tr.width() - 20, 20), Qt::AlignLeft | Qt::AlignVCenter, line2);
-    }
-
-    // 3. BOTTOM NATIVE-TDX OPAQUE BAR: covers TDX's bottom indicator/news/status strip below Volume
-    const int barH = 82;
-    const QRectF botRect(0, H - barH, W, barH);
-    p.fillRect(botRect, QColor(0, 0, 0, 255)); // 100% opaque pure black matching TDX
-    p.setPen(QPen(QColor(128, 0, 0, 255), 1.0)); // Classic TDX dark-red 1px top border
-    p.drawLine(0, H - barH, W, H - barH);
-
-    // Subtle dark-red inner horizontal divider
-    p.setPen(QPen(QColor(55, 0, 0, 255), 1.0));
-    p.drawLine(0, H - barH + 26, W, H - barH + 26);
-
-    // Left block (420px): Market Breadth + 10-day Declining Stocks Bar Chart
+    // ================= PANEL 1 (LEFT): 20-Day Market Breadth & Declining Stocks =================
     if (!m_breadth.isEmpty()) {
         const auto &last = m_breadth.last();
         const bool isIce = (last.down >= 4500);
-        const QColor bCol = isIce ? QColor(0, 230, 0) : (last.down >= 3500 ? QColor(255, 215, 0) : QColor(255, 50, 50));
-
-        const double chartX = 12.0;
-        const double chartY = H - barH + 32.0;
-        const double chartH = 42.0;
-        const double barW = 9.0;
-        const double gap = 3.0;
-        for (int i = 0; i < m_breadth.size(); ++i) {
-            const double frac = qBound(0.08, m_breadth[i].down / 5500.0, 1.0);
-            const double bh = frac * chartH;
-            QColor bc = m_breadth[i].down >= 4500 ? QColor(0, 230, 0)
-                      : (m_breadth[i].down >= 3500 ? QColor(255, 193, 7) : QColor(255, 50, 50));
-            p.fillRect(QRectF(chartX + i * (barW + gap), chartY + (chartH - bh), barW, bh), bc);
-        }
-
+        const QColor bCol = isIce ? QColor(0, 230, 0) : (last.down >= 3500 ? QColor(255, 200, 0) : QColor(255, 50, 50));
         const QString dStr = QString::number(last.date);
         const QString md = dStr.size() == 8 ? (dStr.mid(4, 2) + "-" + dStr.mid(6, 2)) : dStr;
-        const QString badge = isIce ? "冰点" : (last.down >= 3500 ? "偏弱" : "活跃");
+        const QString badge = isIce ? "极端冰点" : (last.down >= 3500 ? "普跌偏弱" : "情绪活跃");
 
-        p.setFont(fTitle);
+        p.setFont(fHdr);
         p.setPen(QColor(255, 255, 0));
-        p.drawText(QRectF(12, H - barH + 3, 210, 20), Qt::AlignLeft | Qt::AlignVCenter,
-                   QString("全市场情绪 (%1)").arg(md));
+        p.drawText(QRectF(10, topY + 2, 230, 20), Qt::AlignLeft | Qt::AlignVCenter,
+                   QString("全市场每日下跌家数 (近%1日)").arg(m_breadth.size()));
         p.setPen(bCol);
-        p.drawText(QRectF(220, H - barH + 3, 190, 20), Qt::AlignRight | Qt::AlignVCenter,
-                   QString("跌%1 [%2]").arg(last.down).arg(badge));
+        p.drawText(QRectF(230, topY + 2, div1 - 240, 20), Qt::AlignRight | Qt::AlignVCenter,
+                   QString("%1 跌%2家 [%3]").arg(md).arg(last.down).arg(badge));
 
-        const double tx = chartX + m_breadth.size() * (barW + gap) + 14.0;
-        p.setFont(fSmall);
-        p.setPen(QColor(215, 215, 215));
-        p.drawText(QRectF(tx, H - barH + 32, 270, 20), Qt::AlignLeft | Qt::AlignVCenter,
-                   QString("下跌占比: %1%    中位数: %2%3%")
+        // Summary metrics row
+        p.setFont(fBody);
+        p.setPen(QColor(210, 210, 210));
+        p.drawText(QRectF(10, topY + 29, div1 - 20, 20), Qt::AlignLeft | Qt::AlignVCenter,
+                   QString("下跌占比 %1%   涨跌中位 %2%3%   跌超5%: %4 家")
                        .arg(last.downPct, 0, 'f', 1)
-                       .arg(last.medianPct > 0 ? "+" : "").arg(last.medianPct, 0, 'f', 2));
-        p.setPen(QColor(170, 170, 170));
-        p.drawText(QRectF(tx, H - barH + 54, 270, 20), Qt::AlignLeft | Qt::AlignVCenter,
-                   QString("跌超5%: %1 家    总计: %2 只").arg(last.drop5).arg(last.total));
-    }
+                       .arg(last.medianPct > 0 ? "+" : "").arg(last.medianPct, 0, 'f', 2)
+                       .arg(last.drop5));
 
-    // Vertical dark-red separator 1
-    const int div1 = 425;
-    p.setPen(QPen(QColor(102, 0, 0), 1.0));
-    p.drawLine(div1, H - barH, div1, H);
+        // 20-day bar chart
+        const double chartL = 38.0;
+        const double chartR = div1 - 12.0;
+        const double chartT = topY + 56.0;
+        const double chartB = H - 20.0;
+        const double chartW = qMax(60.0, chartR - chartL);
+        const double chartH = qMax(40.0, chartB - chartT);
 
-    // Middle block (div1..div2): Current Stock Cycle & Position
-    const int div2 = qMin(W - 340, div1 + 360);
-    if (!m_snap.stockKey.isEmpty()) {
-        p.setFont(fTitle);
-        p.setPen(QColor(255, 255, 0));
-        p.drawText(QRectF(div1 + 12, H - barH + 3, 180, 20), Qt::AlignLeft | Qt::AlignVCenter,
-                   QString("%1 %2").arg(m_snap.stockName, m_snap.stockKey.mid(1)));
+        // Reference dashed lines at 4000 and 5000
+        auto drawRefLine = [&](int val, const QColor &col, const QString &lbl) {
+            const double y = chartB - (val / 5600.0) * chartH;
+            QPen rp(col, 1.0, Qt::DashLine);
+            p.setPen(rp);
+            p.drawLine(QPointF(chartL, y), QPointF(chartR, y));
+            p.setFont(fTiny);
+            p.setPen(col);
+            p.drawText(QRectF(2, y - 7, 34, 14), Qt::AlignRight | Qt::AlignVCenter, lbl);
+        };
+        drawRefLine(4000, QColor(140, 90, 0), "4000");
+        drawRefLine(5000, QColor(0, 140, 0), "5000");
 
-        p.setPen(QColor(0, 255, 255));
-        p.drawText(QRectF(div1 + 190, H - barH + 3, div2 - div1 - 202, 20), Qt::AlignRight | Qt::AlignVCenter,
-                   QString("[%1] 第%2/%3")
-                       .arg(m_snap.category)
-                       .arg(m_snap.activeRank > 0 ? QString::number(m_snap.activeRank) : "-")
-                       .arg(m_snap.peerCount));
+        const int cnt = m_breadth.size();
+        const double slotW = chartW / cnt;
+        const double bw = qMax(4.0, slotW * 0.68);
+        for (int i = 0; i < cnt; ++i) {
+            const auto &bi = m_breadth[i];
+            const double frac = qBound(0.05, bi.down / 5600.0, 1.0);
+            const double bh = frac * chartH;
+            const double bx = chartL + i * slotW + (slotW - bw) * 0.5;
+            const double by = chartB - bh;
+            QColor bc = bi.down >= 4500 ? QColor(0, 220, 0)
+                      : (bi.down >= 3500 ? QColor(235, 170, 0) : QColor(230, 50, 50));
+            if (i == cnt - 1) bc = bc.lighter(115);
+            p.fillRect(QRectF(bx, by, bw, bh), bc);
 
-        if (m_snap.cycle.valid) {
-            const QString peakDateStr = QString::number(m_snap.cycle.peakDate);
-            const QString shortDate = peakDateStr.size() == 8 ? (peakDateStr.mid(4, 2) + "-" + peakDateStr.mid(6, 2)) : peakDateStr;
-            p.setFont(fSmall);
-            p.setPen(QColor(220, 220, 220));
-            p.drawText(QRectF(div1 + 12, H - barH + 32, div2 - div1 - 24, 20), Qt::AlignLeft | Qt::AlignVCenter,
-                       QString("6月来高点: %1 (%2)   回撤: %3%")
-                           .arg(m_snap.cycle.peakHigh, 0, 'f', 2)
-                           .arg(shortDate)
-                           .arg(m_snap.cycle.drawdownPct, 0, 'f', 1));
-            p.setPen(QColor(180, 180, 180));
-            p.drawText(QRectF(div1 + 12, H - barH + 54, div2 - div1 - 24, 20), Qt::AlignLeft | Qt::AlignVCenter,
-                       QString("5日: %1%2%   20日: %3%4%   距MA20: %5%6%")
-                           .arg(m_snap.cycle.chg5dPct > 0 ? "+" : "").arg(m_snap.cycle.chg5dPct, 0, 'f', 1)
-                           .arg(m_snap.cycle.chg20dPct > 0 ? "+" : "").arg(m_snap.cycle.chg20dPct, 0, 'f', 1)
-                           .arg(m_snap.cycle.ma20BiasPct > 0 ? "+" : "").arg(m_snap.cycle.ma20BiasPct, 0, 'f', 1));
+            // Date labels on every 4th bar + last bar
+            if (i == 0 || i == cnt - 1 || i % 4 == 0) {
+                const QString ds = QString::number(bi.date);
+                const QString sMd = ds.size() == 8 ? (ds.mid(4, 2) + "/" + ds.mid(6, 2)) : ds;
+                p.setFont(fTiny);
+                p.setPen(i == cnt - 1 ? QColor(255, 255, 0) : QColor(130, 130, 130));
+                p.drawText(QRectF(bx - 12, chartB + 2, bw + 24, 15), Qt::AlignCenter, sMd);
+            }
         }
     }
 
-    // Vertical dark-red separator 2 + Right block: Category Top Leaders
-    if (W - div2 >= 260) {
-        p.setPen(QPen(QColor(102, 0, 0), 1.0));
-        p.drawLine(div2, H - barH, div2, H);
+    // ================= PANEL 2 (MIDDLE): Active Stock Cycle & 6-Month Position =================
+    {
+        const int x0 = div1 + 12;
+        const int cw = div2 - div1 - 24;
 
-        p.setFont(fTitle);
+        p.setFont(fHdr);
+        p.setPen(QColor(255, 255, 0));
+        const QString sTitle = m_snap.stockKey.isEmpty()
+            ? "等待通达信切股..."
+            : QString("%1 %2").arg(m_snap.stockName, m_snap.stockKey.mid(1));
+        p.drawText(QRectF(x0, topY + 2, cw * 0.55, 20), Qt::AlignLeft | Qt::AlignVCenter, sTitle);
+
+        if (!m_snap.category.isEmpty()) {
+            p.setPen(QColor(0, 255, 255));
+            p.drawText(QRectF(x0 + cw * 0.50, topY + 2, cw * 0.50, 20), Qt::AlignRight | Qt::AlignVCenter,
+                       QString("[%1] 第%2/%3")
+                           .arg(m_snap.category)
+                           .arg(m_snap.activeRank > 0 ? QString::number(m_snap.activeRank) : "-")
+                           .arg(m_snap.peerCount));
+        }
+
+        if (m_snap.cycle.valid) {
+            const auto &cy = m_snap.cycle;
+            const QString pkD = QString::number(cy.peakDate);
+            const QString pkMd = pkD.size() == 8 ? (pkD.mid(4, 2) + "-" + pkD.mid(6, 2)) : pkD;
+            const QString loD = QString::number(cy.lowDate);
+            const QString loMd = loD.size() == 8 ? (loD.mid(4, 2) + "-" + loD.mid(6, 2)) : loD;
+
+            // Row 1: Big Drawdown highlight
+            p.setFont(fBig);
+            p.setPen(cy.drawdownPct <= -40.0 ? QColor(0, 230, 0) : QColor(255, 215, 0));
+            p.drawText(QRectF(x0, topY + 34, cw, 24), Qt::AlignLeft | Qt::AlignVCenter,
+                       QString("6月高点回撤: %1%").arg(cy.drawdownPct, 0, 'f', 1));
+
+            // Row 2: Peak & Low prices
+            p.setFont(fBody);
+            p.setPen(QColor(210, 210, 210));
+            p.drawText(QRectF(x0, topY + 66, cw, 20), Qt::AlignLeft | Qt::AlignVCenter,
+                       QString("区间高: %1 (%2)   区间低: %3 (%4)")
+                           .arg(cy.peakHigh, 0, 'f', 2).arg(pkMd)
+                           .arg(cy.rangeLow, 0, 'f', 2).arg(loMd));
+
+            // Row 3: 5d / 20d / MA20 bias
+            p.setPen(QColor(185, 185, 185));
+            p.drawText(QRectF(x0, topY + 92, cw, 20), Qt::AlignLeft | Qt::AlignVCenter,
+                       QString("5日: %1%2%   20日: %3%4%   距MA20: %5%6%")
+                           .arg(cy.chg5dPct > 0 ? "+" : "").arg(cy.chg5dPct, 0, 'f', 1)
+                           .arg(cy.chg20dPct > 0 ? "+" : "").arg(cy.chg20dPct, 0, 'f', 1)
+                           .arg(cy.ma20BiasPct > 0 ? "+" : "").arg(cy.ma20BiasPct, 0, 'f', 1));
+
+            // Row 4: Native TDX horizontal position gauge (Low -> Current -> High)
+            const double gaugeY = topY + 128.0;
+            const double gaugeH = 12.0;
+            p.fillRect(QRectF(x0, gaugeY, cw, gaugeH), QColor(28, 28, 28));
+            p.setPen(QPen(QColor(90, 0, 0), 1.0));
+            p.drawRect(QRectF(x0, gaugeY, cw, gaugeH));
+
+            double pos = 0.5;
+            if (cy.peakHigh > cy.rangeLow) {
+                pos = qBound(0.0, (cy.curClose - cy.rangeLow) / (cy.peakHigh - cy.rangeLow), 1.0);
+            }
+            p.fillRect(QRectF(x0 + 1, gaugeY + 1, (cw - 2) * pos, gaugeH - 2),
+                       pos >= 0.65 ? QColor(210, 40, 40) : (pos <= 0.35 ? QColor(0, 180, 0) : QColor(210, 160, 0)));
+
+            p.setFont(fTiny);
+            p.setPen(QColor(150, 150, 150));
+            p.drawText(QRectF(x0, gaugeY + 16, cw, 16), Qt::AlignLeft | Qt::AlignVCenter,
+                       QString("低 %1").arg(cy.rangeLow, 0, 'f', 2));
+            p.setPen(QColor(255, 255, 0));
+            p.drawText(QRectF(x0, gaugeY + 16, cw, 16), Qt::AlignCenter,
+                       QString("现位 %1%").arg(pos * 100.0, 0, 'f', 0));
+            p.setPen(QColor(150, 150, 150));
+            p.drawText(QRectF(x0, gaugeY + 16, cw, 16), Qt::AlignRight | Qt::AlignVCenter,
+                       QString("高 %1").arg(cy.peakHigh, 0, 'f', 2));
+        }
+    }
+
+    // ================= PANEL 3 (RIGHT): Category Dispersion (Top 3 Leaders + Bottom 2 Laggards) =================
+    {
+        const int x0 = div2 + 12;
+        const int cw = W - div2 - 22;
+
+        p.setFont(fHdr);
         p.setPen(m_snap.avgPct >= 0 ? QColor(255, 50, 50) : QColor(0, 230, 0));
-        p.drawText(QRectF(div2 + 12, H - barH + 3, W - div2 - 24, 20), Qt::AlignLeft | Qt::AlignVCenter,
+        p.drawText(QRectF(x0, topY + 2, cw, 20), Qt::AlignLeft | Qt::AlignVCenter,
                    QString("同类强弱  均%1%2%  涨%3/跌%4  板%5")
                        .arg(m_snap.avgPct > 0 ? "+" : "").arg(m_snap.avgPct, 0, 'f', 2)
                        .arg(m_snap.upCnt).arg(m_snap.downCnt).arg(m_snap.limitUpCnt));
 
-        p.setFont(fSmall);
+        struct RowItem { QString tag; PeerQuote q; bool isLeader; };
+        QVector<RowItem> rows;
         for (int i = 0; i < qMin(3, m_snap.topLeaders.size()); ++i) {
-            const auto &ld = m_snap.topLeaders[i];
-            const double lx = div2 + 12 + i * ((W - div2 - 24) / 3.0);
-            const double lw = (W - div2 - 24) / 3.0 - 4.0;
+            rows.append({QString("领%1").arg(i + 1), m_snap.topLeaders[i], true});
+        }
+        for (int i = 0; i < qMin(2, m_snap.bottomLaggards.size()); ++i) {
+            rows.append({QString("弱%1").arg(i + 1), m_snap.bottomLaggards[i], false});
+        }
+
+        const double startY = topY + 32.0;
+        const double rowH = qMin(28.0, (H - startY - 8.0) / qMax(1, rows.size()));
+        for (int i = 0; i < rows.size(); ++i) {
+            const double ry = startY + i * rowH;
+            const auto &it = rows[i];
+            const QColor pCol = it.q.pct > 0 ? QColor(255, 50, 50) : (it.q.pct < 0 ? QColor(0, 230, 0) : QColor(220, 220, 220));
+
+            p.setFont(fTiny);
+            p.setPen(it.isLeader ? QColor(255, 80, 80) : QColor(0, 200, 0));
+            p.drawText(QRectF(x0, ry, 28, rowH), Qt::AlignLeft | Qt::AlignVCenter, it.tag);
+
+            p.setFont(fBody);
             p.setPen(QColor(255, 255, 0));
-            p.drawText(QRectF(lx, H - barH + 32, lw, 20), Qt::AlignLeft | Qt::AlignVCenter,
-                       QString("%1.%2").arg(i + 1).arg(ld.name));
-            p.setPen(ld.pct >= 0 ? QColor(255, 50, 50) : QColor(0, 230, 0));
-            p.drawText(QRectF(lx, H - barH + 54, lw, 20), Qt::AlignLeft | Qt::AlignVCenter,
-                       QString("%1%2%").arg(ld.pct > 0 ? "+" : "").arg(ld.pct, 0, 'f', 2));
+            p.drawText(QRectF(x0 + 30, ry, 86, rowH), Qt::AlignLeft | Qt::AlignVCenter, it.q.name);
+
+            // Mini pct bar
+            const double barX = x0 + 118;
+            const double barMaxW = qMax(20.0, cw - 190.0);
+            const double barW = qBound(2.0, (qAbs(it.q.pct) / 10.0) * barMaxW, barMaxW);
+            p.fillRect(QRectF(barX, ry + rowH * 0.30, barW, rowH * 0.40),
+                       QColor(pCol.red(), pCol.green(), pCol.blue(), 170));
+
+            p.setPen(pCol);
+            p.drawText(QRectF(x0 + cw - 68, ry, 68, rowH), Qt::AlignRight | Qt::AlignVCenter,
+                       QString("%1%2%").arg(it.q.pct > 0 ? "+" : "").arg(it.q.pct, 0, 'f', 2));
         }
     }
 }
