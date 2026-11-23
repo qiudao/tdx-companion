@@ -260,46 +260,122 @@ void HudOverlay::paintEvent(QPaintEvent *) {
         p.drawText(QRectF(tr.left() + 10, tr.top() + 31, tr.width() - 20, 20), Qt::AlignLeft | Qt::AlignVCenter, line2);
     }
 
-    // 3. BOTTOM-LEFT ABOVE TDX INDICATOR/NEWS BAR: Market Breadth & 10-Day Declining Stocks Sparkline
+    // 3. BOTTOM NATIVE-TDX OPAQUE BAR: covers TDX's bottom indicator/news/status strip below Volume
+    const int barH = 82;
+    const QRectF botRect(0, H - barH, W, barH);
+    p.fillRect(botRect, QColor(0, 0, 0, 255)); // 100% opaque pure black matching TDX
+    p.setPen(QPen(QColor(128, 0, 0, 255), 1.0)); // Classic TDX dark-red 1px top border
+    p.drawLine(0, H - barH, W, H - barH);
+
+    // Subtle dark-red inner horizontal divider
+    p.setPen(QPen(QColor(55, 0, 0, 255), 1.0));
+    p.drawLine(0, H - barH + 26, W, H - barH + 26);
+
+    // Left block (420px): Market Breadth + 10-day Declining Stocks Bar Chart
     if (!m_breadth.isEmpty()) {
         const auto &last = m_breadth.last();
-        const QRectF br(16, bottomSafe - 62, 394, 58);
         const bool isIce = (last.down >= 4500);
-        const QColor bAccent = isIce ? QColor(0, 230, 118) : (last.down >= 3500 ? QColor(255, 179, 0) : QColor(255, 82, 82));
-        drawPill(p, br, bAccent);
+        const QColor bCol = isIce ? QColor(0, 230, 0) : (last.down >= 3500 ? QColor(255, 215, 0) : QColor(255, 50, 50));
 
-        // Mini 10-day bar chart on left side of pill
-        const double chartX = br.left() + 10;
-        const double chartY = br.top() + 9;
-        const double chartH = 40.0;
-        const double barW = 8.0;
+        const double chartX = 12.0;
+        const double chartY = H - barH + 32.0;
+        const double chartH = 42.0;
+        const double barW = 9.0;
         const double gap = 3.0;
         for (int i = 0; i < m_breadth.size(); ++i) {
             const double frac = qBound(0.08, m_breadth[i].down / 5500.0, 1.0);
             const double bh = frac * chartH;
-            QColor bc = m_breadth[i].down >= 4500 ? QColor(0, 230, 118, alphaText)
-                      : (m_breadth[i].down >= 3500 ? QColor(255, 179, 0, alphaText) : QColor(255, 82, 82, alphaText));
+            QColor bc = m_breadth[i].down >= 4500 ? QColor(0, 230, 0)
+                      : (m_breadth[i].down >= 3500 ? QColor(255, 193, 7) : QColor(255, 50, 50));
             p.fillRect(QRectF(chartX + i * (barW + gap), chartY + (chartH - bh), barW, bh), bc);
         }
 
-        // Right side text stats
-        const double tx = chartX + m_breadth.size() * (barW + gap) + 10;
-        const double tw = br.right() - tx - 10;
         const QString dStr = QString::number(last.date);
         const QString md = dStr.size() == 8 ? (dStr.mid(4, 2) + "-" + dStr.mid(6, 2)) : dStr;
         const QString badge = isIce ? "冰点" : (last.down >= 3500 ? "偏弱" : "活跃");
 
         p.setFont(fTitle);
-        p.setPen(QColor(bAccent.red(), bAccent.green(), bAccent.blue(), alphaText));
-        p.drawText(QRectF(tx, br.top() + 5, tw, 22), Qt::AlignLeft | Qt::AlignVCenter,
-                   QString("全市场(%1) 跌%2 [%3]").arg(md).arg(last.down).arg(badge));
+        p.setPen(QColor(255, 255, 0));
+        p.drawText(QRectF(12, H - barH + 3, 210, 20), Qt::AlignLeft | Qt::AlignVCenter,
+                   QString("全市场情绪 (%1)").arg(md));
+        p.setPen(bCol);
+        p.drawText(QRectF(220, H - barH + 3, 190, 20), Qt::AlignRight | Qt::AlignVCenter,
+                   QString("跌%1 [%2]").arg(last.down).arg(badge));
+
+        const double tx = chartX + m_breadth.size() * (barW + gap) + 14.0;
+        p.setFont(fSmall);
+        p.setPen(QColor(215, 215, 215));
+        p.drawText(QRectF(tx, H - barH + 32, 270, 20), Qt::AlignLeft | Qt::AlignVCenter,
+                   QString("下跌占比: %1%    中位数: %2%3%")
+                       .arg(last.downPct, 0, 'f', 1)
+                       .arg(last.medianPct > 0 ? "+" : "").arg(last.medianPct, 0, 'f', 2));
+        p.setPen(QColor(170, 170, 170));
+        p.drawText(QRectF(tx, H - barH + 54, 270, 20), Qt::AlignLeft | Qt::AlignVCenter,
+                   QString("跌超5%: %1 家    总计: %2 只").arg(last.drop5).arg(last.total));
+    }
+
+    // Vertical dark-red separator 1
+    const int div1 = 425;
+    p.setPen(QPen(QColor(102, 0, 0), 1.0));
+    p.drawLine(div1, H - barH, div1, H);
+
+    // Middle block (div1..div2): Current Stock Cycle & Position
+    const int div2 = qMin(W - 340, div1 + 360);
+    if (!m_snap.stockKey.isEmpty()) {
+        p.setFont(fTitle);
+        p.setPen(QColor(255, 255, 0));
+        p.drawText(QRectF(div1 + 12, H - barH + 3, 180, 20), Qt::AlignLeft | Qt::AlignVCenter,
+                   QString("%1 %2").arg(m_snap.stockName, m_snap.stockKey.mid(1)));
+
+        p.setPen(QColor(0, 255, 255));
+        p.drawText(QRectF(div1 + 190, H - barH + 3, div2 - div1 - 202, 20), Qt::AlignRight | Qt::AlignVCenter,
+                   QString("[%1] 第%2/%3")
+                       .arg(m_snap.category)
+                       .arg(m_snap.activeRank > 0 ? QString::number(m_snap.activeRank) : "-")
+                       .arg(m_snap.peerCount));
+
+        if (m_snap.cycle.valid) {
+            const QString peakDateStr = QString::number(m_snap.cycle.peakDate);
+            const QString shortDate = peakDateStr.size() == 8 ? (peakDateStr.mid(4, 2) + "-" + peakDateStr.mid(6, 2)) : peakDateStr;
+            p.setFont(fSmall);
+            p.setPen(QColor(220, 220, 220));
+            p.drawText(QRectF(div1 + 12, H - barH + 32, div2 - div1 - 24, 20), Qt::AlignLeft | Qt::AlignVCenter,
+                       QString("6月来高点: %1 (%2)   回撤: %3%")
+                           .arg(m_snap.cycle.peakHigh, 0, 'f', 2)
+                           .arg(shortDate)
+                           .arg(m_snap.cycle.drawdownPct, 0, 'f', 1));
+            p.setPen(QColor(180, 180, 180));
+            p.drawText(QRectF(div1 + 12, H - barH + 54, div2 - div1 - 24, 20), Qt::AlignLeft | Qt::AlignVCenter,
+                       QString("5日: %1%2%   20日: %3%4%   距MA20: %5%6%")
+                           .arg(m_snap.cycle.chg5dPct > 0 ? "+" : "").arg(m_snap.cycle.chg5dPct, 0, 'f', 1)
+                           .arg(m_snap.cycle.chg20dPct > 0 ? "+" : "").arg(m_snap.cycle.chg20dPct, 0, 'f', 1)
+                           .arg(m_snap.cycle.ma20BiasPct > 0 ? "+" : "").arg(m_snap.cycle.ma20BiasPct, 0, 'f', 1));
+        }
+    }
+
+    // Vertical dark-red separator 2 + Right block: Category Top Leaders
+    if (W - div2 >= 260) {
+        p.setPen(QPen(QColor(102, 0, 0), 1.0));
+        p.drawLine(div2, H - barH, div2, H);
+
+        p.setFont(fTitle);
+        p.setPen(m_snap.avgPct >= 0 ? QColor(255, 50, 50) : QColor(0, 230, 0));
+        p.drawText(QRectF(div2 + 12, H - barH + 3, W - div2 - 24, 20), Qt::AlignLeft | Qt::AlignVCenter,
+                   QString("同类强弱  均%1%2%  涨%3/跌%4  板%5")
+                       .arg(m_snap.avgPct > 0 ? "+" : "").arg(m_snap.avgPct, 0, 'f', 2)
+                       .arg(m_snap.upCnt).arg(m_snap.downCnt).arg(m_snap.limitUpCnt));
 
         p.setFont(fSmall);
-        p.setPen(QColor(215, 225, 235, alphaText));
-        p.drawText(QRectF(tx, br.top() + 31, tw, 20), Qt::AlignLeft | Qt::AlignVCenter,
-                   QString("跌比%1%  中位%2%3%  跌>5%%4家")
-                       .arg(last.downPct, 0, 'f', 1)
-                       .arg(last.medianPct > 0 ? "+" : "").arg(last.medianPct, 0, 'f', 2)
-                       .arg(last.drop5));
+        for (int i = 0; i < qMin(3, m_snap.topLeaders.size()); ++i) {
+            const auto &ld = m_snap.topLeaders[i];
+            const double lx = div2 + 12 + i * ((W - div2 - 24) / 3.0);
+            const double lw = (W - div2 - 24) / 3.0 - 4.0;
+            p.setPen(QColor(255, 255, 0));
+            p.drawText(QRectF(lx, H - barH + 32, lw, 20), Qt::AlignLeft | Qt::AlignVCenter,
+                       QString("%1.%2").arg(i + 1).arg(ld.name));
+            p.setPen(ld.pct >= 0 ? QColor(255, 50, 50) : QColor(0, 230, 0));
+            p.drawText(QRectF(lx, H - barH + 54, lw, 20), Qt::AlignLeft | Qt::AlignVCenter,
+                       QString("%1%2%").arg(ld.pct > 0 ? "+" : "").arg(ld.pct, 0, 'f', 2));
+        }
     }
 }
