@@ -10,14 +10,98 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
 const (
-	agentVersion = "0.5.0"
+	agentVersion = "0.6.0"
 	defaultAddr  = "0.0.0.0:19877"
 	xiadanExe    = "xiadan.exe"
 )
+
+type KeepaliveState struct {
+	mu          sync.Mutex
+	Enabled     bool   `json:"enabled"`
+	IntervalSec int    `json:"interval_sec"`
+	LastPingAt  string `json:"last_ping_at,omitempty"`
+	PingCount   int    `json:"ping_count"`
+	LastStatus  string `json:"last_status,omitempty"`
+}
+
+var keepalive = &KeepaliveState{
+	Enabled:     true,
+	IntervalSec: 240, // 4 minutes during trading hours
+}
+
+func isTradingHours(now time.Time) bool {
+	wd := now.Weekday()
+	if wd == time.Saturday || wd == time.Sunday {
+		return false
+	}
+	hm := now.Hour()*100 + now.Minute()
+	return (hm >= 915 && hm <= 1132) || (hm >= 1258 && hm <= 1502)
+}
+
+func startKeepaliveLoop() {
+	go func() {
+		var lastRun time.Time
+		ticker := time.NewTicker(15 * time.Second)
+		defer ticker.Stop()
+		for now := range ticker.C {
+			keepalive.mu.Lock()
+			enabled := keepalive.Enabled
+			interval := time.Duration(keepalive.IntervalSec) * time.Second
+			keepalive.mu.Unlock()
+
+			if !enabled || interval < 30*time.Second {
+				continue
+			}
+			if !isTradingHours(now) {
+				continue
+			}
+			if !lastRun.IsZero() && now.Sub(lastRun) < interval {
+				continue
+			}
+			if riskMgr.Config().Halted {
+				continue
+			}
+			pid := findProcessPID(xiadanExe)
+			mainWin, ok := findMainXiadanWindow(pid)
+			if !ok {
+				continue
+			}
+			if len(findVisibleDialogs(pid)) > 0 {
+				keepalive.mu.Lock()
+				keepalive.LastStatus = "paused_dialog_active"
+				keepalive.mu.Unlock()
+				continue
+			}
+			// Silent refresh via button 32790 (no foreground focus stealing)
+			if refreshBtn, okR := findVisibleCtrlByIDAndClass(mainWin.Hwnd, 32790, "Button"); okR {
+				clickButton(refreshBtn.Hwnd)
+				lastRun = now
+				keepalive.mu.Lock()
+				keepalive.LastPingAt = now.Format(time.RFC3339)
+				keepalive.PingCount++
+				keepalive.LastStatus = "ok_btn_32790"
+				keepalive.mu.Unlock()
+			}
+		}
+	}()
+}
+
+func (k *KeepaliveState) Snapshot() map[string]any {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	return map[string]any{
+		"enabled":      k.Enabled,
+		"interval_sec": k.IntervalSec,
+		"last_ping_at": k.LastPingAt,
+		"ping_count":   k.PingCount,
+		"last_status":  k.LastStatus,
+	}
+}
 
 var contractNoRe = regexp.MustCompile(`合同编号[：:]\s*([0-9A-Za-z_-]+)`)
 
@@ -91,6 +175,7 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 		"xiadan_class":   mainWin.Class,
 		"active_dialogs": len(dialogs),
 		"risk":           riskMgr.Config(),
+		"keepalive":      keepalive.Snapshot(),
 	})
 }
 
@@ -721,13 +806,30 @@ func handleScreenshot(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(pngBytes)
 }
 
+func handleKeepalive(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	keepalive.mu.Lock()
+	if v := strings.TrimSpace(q.Get("enabled")); v != "" {
+		keepalive.Enabled = (v == "1" || strings.EqualFold(v, "true"))
+	}
+	if v := strings.TrimSpace(q.Get("interval_sec")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 30 && n <= 3600 {
+			keepalive.IntervalSec = n
+		}
+	}
+	keepalive.mu.Unlock()
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "keepalive": keepalive.Snapshot()})
+}
+
 func main() {
 	addr := strings.TrimSpace(os.Getenv("TRADE_AGENT_ADDR"))
 	if addr == "" {
 		addr = defaultAddr
 	}
+	startKeepaliveLoop()
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", withAuth(handleHealth))
+	mux.HandleFunc("/keepalive", withAuth(handleKeepalive))
 	mux.HandleFunc("/probe", withAuth(handleProbe))
 	mux.HandleFunc("/dialogs", withAuth(handleDialogs))
 	mux.HandleFunc("/dialog/dismiss", withAuth(handleDialogDismiss))
