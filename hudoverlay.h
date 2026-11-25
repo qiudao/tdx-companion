@@ -49,14 +49,6 @@ struct DeviationInfo {
     double tomorrow200 = 0.0;
 };
 
-enum class DevHudMode {
-    BottomCapsule = 0, // 2A: 底栏贴边进度条胶囊
-    TopRightCard  = 1, // 2B: 主图右上角战术卡 + 3日松绑推演
-    RightRuler    = 2, // 2D: 主图右侧控盘三价标尺
-    AllInOne      = 3, // 组合全开 (2A + 2B + 2D)
-    Off           = 4  // 关闭异动浮层
-};
-
 struct BreadthDayInfo {
     int date = 0;
     int total = 0;
@@ -104,11 +96,6 @@ public:
     double hudOpacity() const { return m_opacity; }
     QString opacityLabel() const;
 
-    void cycleDevMode();
-    DevHudMode devMode() const { return m_devMode; }
-    QString devModeLabel() const;
-    QString devModeShortLabel() const;
-
     void setAlwaysOnTop(bool onTop);
 
 signals:
@@ -124,9 +111,7 @@ private:
     void recomputePendingStocks();
     DeviationInfo computeDeviation(const QString &stockKey, const QVector<DailyBarLite> &stkBars) const;
 
-    void paintDevBottomCapsule(QPainter &p, int W, int topY, int bgAlpha, const DeviationInfo &d) const;
-    void paintDevTopRightCard(QPainter &p, int W, int bgAlpha, const DeviationInfo &d) const;
-    void paintDevRightRuler(QPainter &p, int W, int topY, int bgAlpha, const DeviationInfo &d) const;
+    void paintDevCard(QPainter &p, int bgAlpha, const DeviationInfo &d) const;
 
     QNetworkAccessManager *m_nam = nullptr;
     QString m_agentBaseUrl;
@@ -135,7 +120,6 @@ private:
     QVector<BreadthDayInfo> m_breadth; // last 20 trading days
     double m_opacity = 1.0;
     int m_opacityIdx = 2; // 0=半透(0.75), 1=微透(0.90), 2=原生不透明(1.0)
-    DevHudMode m_devMode = DevHudMode::TopRightCard;
 
     QMap<QString, QVector<DailyBarLite>> m_indexBars;
     QMap<QString, QVector<DailyBarLite>> m_stockBarsCache;

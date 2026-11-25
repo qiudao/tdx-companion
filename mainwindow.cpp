@@ -57,8 +57,6 @@ MainWindow::MainWindow(QWidget *parent)
             m_statusLbl->setText("HUD 透明度: " + m_hud->opacityLabel());
         }
     });
-    auto *scDevMode = new QShortcut(QKeySequence("Ctrl+D"), this);
-    connect(scDevMode, &QShortcut::activated, this, &MainWindow::onCycleDevMode);
 
     QTimer::singleShot(80, this, [this]() {
         QString err;
@@ -68,7 +66,7 @@ MainWindow::MainWindow(QWidget *parent)
         }
         if (m_bridge->startWatcher(err)) {
             if (m_hud) m_hud->setAgentVmIp(m_bridge->vmIp());
-            m_statusLbl->setText(QString("就绪 · 自选%1只 · ⌘B无框 · ⌘D异动").arg(m_bridge->watchlistCount()));
+            m_statusLbl->setText(QString("就绪 · 自选%1只 · ⌘B切无框").arg(m_bridge->watchlistCount()));
         } else {
             m_statusLbl->setText("错误: " + err);
         }
@@ -144,10 +142,6 @@ void MainWindow::setupUi() {
     m_btnHud->setToolTip("全屏透明穿透抬头显示 (⌘U 开关 · ⌘⇧U 调透明度)");
     connect(m_btnHud, &QPushButton::toggled, this, &MainWindow::onToggleHud);
 
-    m_btnDevMode = new QPushButton("2B");
-    m_btnDevMode->setToolTip("切换异动HUD样式 (⌘D): 2A贴边胶囊 / 2B极简战术卡 / 2D控盘尺 / 全开 / 关闭");
-    connect(m_btnDevMode, &QPushButton::clicked, this, &MainWindow::onCycleDevMode);
-
     auto *btnSync = new QPushButton("刷");
     btnSync->setToolTip("重新同步通达信自选股");
     connect(btnSync, &QPushButton::clicked, this, &MainWindow::onForceSyncCache);
@@ -158,7 +152,6 @@ void MainWindow::setupUi() {
     ctrlRow->addWidget(m_btnAuto);
     ctrlRow->addWidget(m_btnFrameless);
     ctrlRow->addWidget(m_btnHud);
-    ctrlRow->addWidget(m_btnDevMode);
     ctrlRow->addWidget(btnSync);
     root->addWidget(ctrlBar);
 
@@ -317,24 +310,6 @@ void MainWindow::onToggleHud(bool checked) {
     } else {
         m_hud->hide();
     }
-}
-
-void MainWindow::onCycleDevMode() {
-    if (!m_hud) return;
-    m_hud->cycleDevMode();
-    if (m_btnDevMode) {
-        m_btnDevMode->setText(m_hud->devModeShortLabel());
-    }
-    if (m_hudEnabled) {
-        m_hud->show();
-        m_hud->raise();
-    }
-    if (!m_activeStockKey.isEmpty()) {
-        m_hud->setAgentVmIp(m_bridge->vmIp());
-        m_hud->requestDeviations({m_activeStockKey});
-    }
-    m_statusLbl->setText("异动HUD: " + m_hud->devModeLabel());
-    rebuildPeerTable();
 }
 
 void MainWindow::showEvent(QShowEvent *event) {
@@ -501,7 +476,7 @@ void MainWindow::rebuildPeerTable() {
         QString displayName = (isActive ? "▸" : "") + q.name;
         QColor nameCol("#FFFF00"); // Classic TDX Yellow stock name
         QString devTip;
-        if (m_hud && m_hud->devMode() != DevHudMode::Off) {
+        if (m_hud) {
             const DeviationInfo di = m_hud->cachedDeviation(q.key);
             if (di.valid) {
                 devTip = QString("偏10: %1%2% | 价100: %3 | 明100: %4 | 偏30: %5%6%")
@@ -615,7 +590,6 @@ void MainWindow::onTableContextMenu(const QPoint &pos) {
         m_btnHud->setChecked(!m_btnHud->isChecked());
     });
     if (m_hud) {
-        menu.addAction(QString("切换异动 HUD 样式 [当前:%1] (⌘D)").arg(m_hud->devModeLabel()), this, &MainWindow::onCycleDevMode);
         menu.addAction(QString("切换 HUD 透明度 [当前:%1] (⌘⇧U)").arg(m_hud->opacityLabel()), [this]() {
             m_hud->cycleOpacity();
             m_statusLbl->setText("HUD 透明度: " + m_hud->opacityLabel());

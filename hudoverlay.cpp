@@ -26,19 +26,10 @@ double round2(double v) {
 }
 
 QColor devLevelColor(const DeviationInfo &d) {
-    if (d.triggered10 || d.triggered30) return QColor(255, 45, 45);     // 亮红：已触发
+    if (d.triggered10 || d.triggered30) return QColor(255, 45, 45);          // 亮红：已触发
     if (d.dev10 >= 90.0 || d.tomorrowZtTriggers) return QColor(255, 110, 0); // 亮橙：高危/明板触发
     if (d.dev10 >= 70.0 || d.dev30 >= 140.0) return QColor(255, 210, 0);     // 金黄：逼近观察
-    return QColor(145, 165, 180);                                             // 淡灰蓝：安全
-}
-
-QString devBadgeText(const DeviationInfo &d) {
-    if (d.triggered10) return "10日严重异动!";
-    if (d.triggered30) return "30日严重异动!";
-    if (d.tomorrowZtTriggers) return "明板触发!";
-    if (d.dev10 >= 85.0) return "高危控盘";
-    if (d.dev10 >= 70.0) return "逼近异动";
-    return "安全";
+    return QColor(145, 165, 180);                                            // 淡灰蓝：安全
 }
 } // namespace
 
@@ -90,34 +81,6 @@ QString HudOverlay::opacityLabel() const {
     if (m_opacityIdx == 0) return "半透明";
     if (m_opacityIdx == 1) return "微透";
     return "原生不透明";
-}
-
-void HudOverlay::cycleDevMode() {
-    int next = (static_cast<int>(m_devMode) + 1) % 5;
-    m_devMode = static_cast<DevHudMode>(next);
-    update();
-}
-
-QString HudOverlay::devModeLabel() const {
-    switch (m_devMode) {
-    case DevHudMode::BottomCapsule: return "2A 底栏贴边胶囊";
-    case DevHudMode::TopRightCard:  return "2B 左上战术卡";
-    case DevHudMode::RightRuler:    return "2D 左上控盘尺";
-    case DevHudMode::AllInOne:      return "全开组合";
-    case DevHudMode::Off:           return "关闭";
-    }
-    return "2A 底栏贴边胶囊";
-}
-
-QString HudOverlay::devModeShortLabel() const {
-    switch (m_devMode) {
-    case DevHudMode::BottomCapsule: return "2A";
-    case DevHudMode::TopRightCard:  return "2B";
-    case DevHudMode::RightRuler:    return "2D";
-    case DevHudMode::AllInOne:      return "全";
-    case DevHudMode::Off:           return "关";
-    }
-    return "2A";
 }
 
 void HudOverlay::setAlwaysOnTop(bool onTop) {
@@ -518,59 +481,8 @@ void HudOverlay::reloadMarketBreadth() {
     update();
 }
 
-// ================= 2A: 左侧底栏贴边进度条胶囊 =================
-void HudOverlay::paintDevBottomCapsule(QPainter &p, int W, int topY, int bgAlpha, const DeviationInfo &d) const {
-    const int capH = 26;
-    const int capY = topY - capH - 1;
-    const int capX = 10;
-    const int capW = qMin(W - 20, 760);
-    const QColor lv = devLevelColor(d);
-
-    // Base dark canvas
-    p.fillRect(QRectF(capX, capY, capW, capH), QColor(8, 8, 8, qMin(235, bgAlpha)));
-
-    // Progress bar fill behind text (0% -> 100%)
-    const double frac = qBound(0.0, d.dev10 / 100.0, 1.0);
-    p.fillRect(QRectF(capX + 1, capY + 1, (capW - 2) * frac, capH - 2),
-               QColor(lv.red(), lv.green(), lv.blue(), d.triggered10 ? 95 : 52));
-
-    // Crisp border
-    p.setPen(QPen(QColor(lv.red(), lv.green(), lv.blue(), 190), 1.0));
-    p.drawRect(QRectF(capX, capY, capW, capH));
-
-    // Status badge pill on left
-    const QString badge = devBadgeText(d);
-    QFont fBadge("PingFang SC", 10, QFont::Bold);
-    p.setFont(fBadge);
-    const int badgeW = (d.triggered10 || d.triggered30) ? 94 : 68;
-    p.fillRect(QRectF(capX + 4, capY + 4, badgeW, capH - 8),
-               d.triggered10 ? QColor(200, 20, 20, 230) : QColor(lv.red(), lv.green(), lv.blue(), 45));
-    p.setPen(d.triggered10 ? QColor(255, 255, 255) : lv);
-    p.drawText(QRectF(capX + 4, capY + 4, badgeW, capH - 8), Qt::AlignCenter, badge);
-
-    // Core numbers
-    const double remPct = (d.close > 0) ? ((d.tomorrow100 / d.close - 1.0) * 100.0) : 0.0;
-    const double remBoards = remPct / (d.ztRatio * 100.0);
-    const QString ctrlHint = d.tomorrowZtTriggers
-        ? QString(" [明板触发! 控%1]").arg(d.tomorrow100 - 0.01, 0, 'f', 2)
-        : QString(" (%1%2% / %3板)").arg(remPct > 0 ? "+" : "").arg(remPct, 0, 'f', 1).arg(remBoards, 0, 'f', 1);
-
-    const QString line = QString("偏10: %1%2%(N%3)  │  今100: %4  │  明100: %5%6  │  偏30: %7%8% (价200:%9)")
-        .arg(d.dev10 > 0 ? "+" : "").arg(d.dev10, 0, 'f', 1).arg(d.n10)
-        .arg(d.price100, 0, 'f', 2)
-        .arg(d.tomorrow100, 0, 'f', 2).arg(ctrlHint)
-        .arg(d.dev30 > 0 ? "+" : "").arg(d.dev30, 0, 'f', 1)
-        .arg(d.price200, 0, 'f', 2);
-
-    QFont fBody("PingFang SC", 11, QFont::Bold);
-    p.setFont(fBody);
-    p.setPen(QColor(245, 245, 245));
-    p.drawText(QRectF(capX + badgeW + 12, capY, capW - badgeW - 18, capH), Qt::AlignLeft | Qt::AlignVCenter, line);
-}
-
-// ================= 2B: K线图左上角极简双进度条卡片 =================
-void HudOverlay::paintDevTopRightCard(QPainter &p, int W, int bgAlpha, const DeviationInfo &d) const {
-    Q_UNUSED(W);
+// ================= K线图左上角极简双进度条异动卡片 =================
+void HudOverlay::paintDevCard(QPainter &p, int bgAlpha, const DeviationInfo &d) const {
     const int cardW = 308;
     const int cardH = 60;
     const int x0 = 12;
@@ -623,85 +535,6 @@ void HudOverlay::paintDevTopRightCard(QPainter &p, int W, int bgAlpha, const Dev
     p.setFont(fCast);
     p.setPen(d.tomorrowZtTriggers ? QColor(255, 120, 60) : QColor(0, 225, 245));
     p.drawText(QRectF(x0 + 7, y0 + 41, cardW - 14, 15), Qt::AlignLeft | Qt::AlignVCenter, forecast);
-}
-
-// ================= 2D: K线图左上角文字下方控盘三价标尺 =================
-void HudOverlay::paintDevRightRuler(QPainter &p, int W, int topY, int bgAlpha, const DeviationInfo &d) const {
-    Q_UNUSED(W);
-    const int boxW = 196;
-    const int boxH = 152;
-    const int x0 = 12;
-    // 单独显示2D时放在左上文字下方(y=68)；全开模式时自动排在2B卡片下方(y=136)不重叠
-    const int y0 = (m_devMode == DevHudMode::AllInOne) ? 136 : qMin(68, qMax(50, topY - boxH - 36));
-    const QColor lv = devLevelColor(d);
-
-    p.fillRect(QRectF(x0, y0, boxW, boxH), QColor(10, 8, 8, qMin(228, bgAlpha)));
-    p.setPen(QPen(QColor(lv.red(), lv.green(), lv.blue(), 190), 1.0));
-    p.drawRect(QRectF(x0, y0, boxW, boxH));
-
-    // Title
-    QFont fHdr("PingFang SC", 10, QFont::Bold);
-    p.setFont(fHdr);
-    p.fillRect(QRectF(x0 + 1, y0 + 1, boxW - 2, 20), QColor(26, 6, 6, 230));
-    p.setPen(lv);
-    p.drawText(QRectF(x0 + 6, y0 + 1, boxW - 12, 20), Qt::AlignLeft | Qt::AlignVCenter,
-               QString("控盘标尺 · %1").arg(devBadgeText(d)));
-
-    // Compute vertical scale covering [curClose, tomorrowZtPrice, tomorrow100]
-    const double curP = d.close;
-    const double ztP = d.tomorrowZtPrice;
-    const double redP = d.tomorrow100;
-    const double minP = qMin(curP, qMin(ztP, redP)) * 0.985;
-    const double maxP = qMax(curP, qMax(ztP, redP)) * 1.015;
-    const double span = qMax(0.05, maxP - minP);
-
-    const int railX = x0 + 18;
-    const int railT = y0 + 32;
-    const int railB = y0 + boxH - 26;
-    const int railH = railB - railT;
-    auto yFor = [&](double price) -> double {
-        return railB - qBound(0.0, (price - minP) / span, 1.0) * railH;
-    };
-
-    // Vertical rail + danger zone above redP
-    p.fillRect(QRectF(railX - 2, railT, 4, railH), QColor(50, 50, 50));
-    const double yRed = yFor(redP);
-    p.fillRect(QRectF(railX - 3, railT, 6, qMax(0.0, yRed - railT)), QColor(220, 35, 35, 190));
-
-    struct Mark { double price; double y; QString label; QColor col; };
-    QVector<Mark> marks = {
-        {ztP,  yFor(ztP),  QString("明涨停 %1").arg(ztP, 0, 'f', 2), QColor(255, 80, 160)},
-        {redP, yRed,       QString("红线 %1 (控%2)").arg(redP, 0, 'f', 2).arg(redP - 0.01, 0, 'f', 2), QColor(255, 60, 40)},
-        {curP, yFor(curP), QString("现价 %1").arg(curP, 0, 'f', 2), QColor(255, 255, 0)}
-    };
-    std::sort(marks.begin(), marks.end(), [](const Mark &a, const Mark &b) { return a.y < b.y; });
-    // Avoid overlapping labels vertically
-    for (int i = 1; i < marks.size(); ++i) {
-        if (marks[i].y - marks[i - 1].y < 20.0) {
-            marks[i].y = marks[i - 1].y + 20.0;
-        }
-    }
-
-    QFont fLbl("PingFang SC", 10, QFont::Bold);
-    p.setFont(fLbl);
-    for (const auto &m : marks) {
-        const double actualY = yFor(m.price);
-        p.setPen(QPen(m.col, 1.5));
-        p.drawLine(QPointF(railX - 6, actualY), QPointF(railX + 10, actualY));
-        p.setPen(m.col);
-        p.drawText(QRectF(railX + 14, m.y - 9, boxW - 36, 18), Qt::AlignLeft | Qt::AlignVCenter, m.label);
-    }
-
-    // Bottom distance summary
-    const double diff = redP - curP;
-    const double diffPct = (curP > 0) ? (diff / curP * 100.0) : 0.0;
-    QFont fFoot("PingFang SC", 10);
-    p.setFont(fFoot);
-    p.setPen(diff <= 0 ? QColor(255, 60, 60) : QColor(0, 235, 255));
-    p.drawText(QRectF(x0 + 6, y0 + boxH - 20, boxW - 12, 18), Qt::AlignCenter,
-               QString("距明红线: %1%2 (%3%4%)")
-                   .arg(diff > 0 ? "+" : "").arg(diff, 0, 'f', 2)
-                   .arg(diffPct > 0 ? "+" : "").arg(diffPct, 0, 'f', 1));
 }
 
 void HudOverlay::paintEvent(QPaintEvent *) {
@@ -930,40 +763,8 @@ void HudOverlay::paintEvent(QPaintEvent *) {
         }
     }
 
-    // ================= FLOATING SEVERE DEVIATION OVERLAYS (2A / 2B / 2D / ALL) =================
-    if (m_devMode != DevHudMode::Off) {
-        if (m_snap.deviation.valid) {
-            const auto &d = m_snap.deviation;
-            switch (m_devMode) {
-            case DevHudMode::BottomCapsule:
-                paintDevBottomCapsule(p, W, topY, bgAlpha, d);
-                break;
-            case DevHudMode::TopRightCard:
-                paintDevTopRightCard(p, W, bgAlpha, d);
-                break;
-            case DevHudMode::RightRuler:
-                paintDevRightRuler(p, W, topY, bgAlpha, d);
-                break;
-            case DevHudMode::AllInOne:
-                paintDevBottomCapsule(p, W, topY, bgAlpha, d);
-                paintDevTopRightCard(p, W, bgAlpha, d);
-                paintDevRightRuler(p, W, topY, bgAlpha, d);
-                break;
-            case DevHudMode::Off:
-                break;
-            }
-        } else {
-            // Show subtle left-side status pill so user always sees the active mode
-            const int px = 12, py = topY - 25, pw = 240, ph = 22;
-            p.fillRect(QRectF(px, py, pw, ph), QColor(12, 12, 12, qMin(220, bgAlpha)));
-            p.setPen(QPen(QColor(130, 60, 0, 180), 1.0));
-            p.drawRect(QRectF(px, py, pw, ph));
-            p.setFont(fTiny);
-            p.setPen(QColor(220, 180, 80));
-            const QString msg = m_snap.stockKey.isEmpty()
-                ? QString("[%1] 等待通达信选股...").arg(devModeLabel())
-                : QString("[%1] 拉取 %2 异动数据...").arg(devModeShortLabel(), m_snap.stockName);
-            p.drawText(QRectF(px + 8, py, pw - 16, ph), Qt::AlignLeft | Qt::AlignVCenter, msg);
-        }
+    // ================= FLOATING SEVERE DEVIATION CARD =================
+    if (m_snap.deviation.valid) {
+        paintDevCard(p, bgAlpha, m_snap.deviation);
     }
 }
