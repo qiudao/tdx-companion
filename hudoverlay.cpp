@@ -100,13 +100,13 @@ void HudOverlay::cycleDevMode() {
 
 QString HudOverlay::devModeLabel() const {
     switch (m_devMode) {
-    case DevHudMode::BottomCapsule: return "2A 左侧贴边胶囊";
-    case DevHudMode::TopRightCard:  return "2B 左上战术卡";
-    case DevHudMode::RightRuler:    return "2D 左侧控盘尺";
-    case DevHudMode::AllInOne:      return "左侧全开组合";
+    case DevHudMode::BottomCapsule: return "2A 底栏贴边胶囊";
+    case DevHudMode::TopRightCard:  return "2B 右上战术卡";
+    case DevHudMode::RightRuler:    return "2D 右侧控盘尺";
+    case DevHudMode::AllInOne:      return "全开组合";
     case DevHudMode::Off:           return "关闭";
     }
-    return "2A 左侧贴边胶囊";
+    return "2A 底栏贴边胶囊";
 }
 
 QString HudOverlay::devModeShortLabel() const {
@@ -568,13 +568,12 @@ void HudOverlay::paintDevBottomCapsule(QPainter &p, int W, int topY, int bgAlpha
     p.drawText(QRectF(capX + badgeW + 12, capY, capW - badgeW - 18, capH), Qt::AlignLeft | Qt::AlignVCenter, line);
 }
 
-// ================= 2B: 主图左上角战术卡片 + 3日松绑推演 =================
+// ================= 2B: 主图右上角文字下方战术卡片 + 3日松绑推演 =================
 void HudOverlay::paintDevTopRightCard(QPainter &p, int W, int bgAlpha, const DeviationInfo &d) const {
-    Q_UNUSED(W);
     const int cardW = 372;
     const int cardH = 92;
-    const int x0 = 12;
-    const int y0 = 64;
+    const int x0 = W - cardW - 14;
+    const int y0 = 96; // 避开顶部工具栏与右上角文字行
     const QColor lv = devLevelColor(d);
 
     // Background + top accent strip
@@ -639,13 +638,13 @@ void HudOverlay::paintDevTopRightCard(QPainter &p, int W, int bgAlpha, const Dev
     p.drawText(QRectF(x0 + 8, y0 + 69, cardW - 16, 18), Qt::AlignLeft | Qt::AlignVCenter, forecast);
 }
 
-// ================= 2D: 主图左侧控盘三价标尺 =================
+// ================= 2D: 主图右上文字下方控盘三价标尺 =================
 void HudOverlay::paintDevRightRuler(QPainter &p, int W, int topY, int bgAlpha, const DeviationInfo &d) const {
-    Q_UNUSED(W);
     const int boxW = 196;
     const int boxH = 152;
-    const int x0 = 12;
-    const int y0 = qMax(168, (topY - boxH) / 2);
+    const int x0 = W - boxW - 14;
+    // 单独显示2D时放在右上文字下方(y=96)；全开模式时自动排在2B卡片下方(y=198)不重叠
+    const int y0 = (m_devMode == DevHudMode::AllInOne) ? 198 : qMin(96, qMax(64, topY - boxH - 36));
     const QColor lv = devLevelColor(d);
 
     p.fillRect(QRectF(x0, y0, boxW, boxH), QColor(10, 8, 8, qMin(228, bgAlpha)));
