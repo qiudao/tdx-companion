@@ -41,6 +41,7 @@ public:
     QString resolveStockKeyByName(const QString &name) const;
     bool isInWatchlist(const QString &stockKey) const { return m_zxgKeys.contains(stockKey); }
     int watchlistCount() const { return m_zxgKeys.size(); }
+    QString vmIp() const { return m_vmIp; }
 
     // Fetch live quotes for a list of 7-char stock keys
     void fetchQuotes(const QStringList &keys, int requestToken);

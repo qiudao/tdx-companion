@@ -40,6 +40,11 @@ MainWindow::MainWindow(QWidget *parent)
     // Full-Screen Transparent Click-Through Car-HUD
     m_hud = new HudOverlay(nullptr);
     if (m_hudEnabled) m_hud->show();
+    connect(m_hud, &HudOverlay::deviationUpdated, this, [this](const QString &key) {
+        if (m_peerQuotes.contains(key)) {
+            rebuildPeerTable();
+        }
+    });
 
     auto *scHud = new QShortcut(QKeySequence("Ctrl+U"), this);
     connect(scHud, &QShortcut::activated, this, [this]() {
@@ -52,6 +57,8 @@ MainWindow::MainWindow(QWidget *parent)
             m_statusLbl->setText("HUD 透明度: " + m_hud->opacityLabel());
         }
     });
+    auto *scDevMode = new QShortcut(QKeySequence("Ctrl+D"), this);
+    connect(scDevMode, &QShortcut::activated, this, &MainWindow::onCycleDevMode);
 
     QTimer::singleShot(80, this, [this]() {
         QString err;
@@ -60,7 +67,8 @@ MainWindow::MainWindow(QWidget *parent)
             return;
         }
         if (m_bridge->startWatcher(err)) {
-            m_statusLbl->setText(QString("就绪 · 自选%1只 · ⌘B切无框").arg(m_bridge->watchlistCount()));
+            if (m_hud) m_hud->setAgentVmIp(m_bridge->vmIp());
+            m_statusLbl->setText(QString("就绪 · 自选%1只 · ⌘B无框 · ⌘D异动").arg(m_bridge->watchlistCount()));
         } else {
             m_statusLbl->setText("错误: " + err);
         }
@@ -136,6 +144,10 @@ void MainWindow::setupUi() {
     m_btnHud->setToolTip("全屏透明穿透抬头显示 (⌘U 开关 · ⌘⇧U 调透明度)");
     connect(m_btnHud, &QPushButton::toggled, this, &MainWindow::onToggleHud);
 
+    m_btnDevMode = new QPushButton("2A");
+    m_btnDevMode->setToolTip("切换异动HUD样式 (⌘D): 2A贴边胶囊 / 2B战术卡 / 2D控盘尺 / 全开 / 关闭");
+    connect(m_btnDevMode, &QPushButton::clicked, this, &MainWindow::onCycleDevMode);
+
     auto *btnSync = new QPushButton("刷");
     btnSync->setToolTip("重新同步通达信自选股");
     connect(btnSync, &QPushButton::clicked, this, &MainWindow::onForceSyncCache);
@@ -146,6 +158,7 @@ void MainWindow::setupUi() {
     ctrlRow->addWidget(m_btnAuto);
     ctrlRow->addWidget(m_btnFrameless);
     ctrlRow->addWidget(m_btnHud);
+    ctrlRow->addWidget(m_btnDevMode);
     ctrlRow->addWidget(btnSync);
     root->addWidget(ctrlBar);
 
@@ -306,6 +319,16 @@ void MainWindow::onToggleHud(bool checked) {
     }
 }
 
+void MainWindow::onCycleDevMode() {
+    if (!m_hud) return;
+    m_hud->cycleDevMode();
+    if (m_btnDevMode) {
+        m_btnDevMode->setText(m_hud->devModeShortLabel());
+    }
+    m_statusLbl->setText("异动HUD: " + m_hud->devModeLabel());
+    rebuildPeerTable();
+}
+
 void MainWindow::showEvent(QShowEvent *event) {
     QMainWindow::showEvent(event);
     if (m_hud && m_hudEnabled && !isMinimized()) {
@@ -402,6 +425,11 @@ void MainWindow::displayCategory(const QString &category) {
     }
     rebuildPeerTable();
 
+    if (m_hud) {
+        m_hud->setAgentVmIp(m_bridge->vmIp());
+        m_hud->requestDeviations(peers);
+    }
+
     m_quoteReqToken++;
     m_bridge->fetchQuotes(peers, m_quoteReqToken);
 }
@@ -461,9 +489,35 @@ void MainWindow::rebuildPeerTable() {
         const bool isActive = (q.key == m_activeStockKey);
         if (isActive) activeRow = i;
 
-        auto *c0 = new QTableWidgetItem((isActive ? "▸" : "") + q.name);
+        // 2C: Peer list severe-deviation badge
+        QString displayName = (isActive ? "▸" : "") + q.name;
+        QColor nameCol("#FFFF00"); // Classic TDX Yellow stock name
+        QString devTip;
+        if (m_hud && m_hud->devMode() != DevHudMode::Off) {
+            const DeviationInfo di = m_hud->cachedDeviation(q.key);
+            if (di.valid) {
+                devTip = QString("偏10: %1%2% | 价100: %3 | 明100: %4 | 偏30: %5%6%")
+                    .arg(di.dev10 > 0 ? "+" : "").arg(di.dev10, 0, 'f', 1)
+                    .arg(di.price100, 0, 'f', 2)
+                    .arg(di.tomorrow100, 0, 'f', 2)
+                    .arg(di.dev30 > 0 ? "+" : "").arg(di.dev30, 0, 'f', 1);
+                if (di.triggered10 || di.triggered30) {
+                    displayName += " [异]";
+                    nameCol = QColor("#FF4040");
+                } else if (di.tomorrowZtTriggers) {
+                    displayName += " [明异]";
+                    nameCol = QColor("#FF8C00");
+                } else if (di.dev10 >= 70.0) {
+                    displayName += QString(" [%1%]").arg(static_cast<int>(di.dev10));
+                    nameCol = QColor("#FFD700");
+                }
+            }
+        }
+
+        auto *c0 = new QTableWidgetItem(displayName);
         c0->setData(Qt::UserRole, q.key);
-        c0->setForeground(QColor("#FFFF00")); // Classic TDX Yellow stock name
+        c0->setForeground(nameCol);
+        if (!devTip.isEmpty()) c0->setToolTip(devTip);
 
         auto *c1 = new QTableWidgetItem(q.price > 0 ? QString::number(q.price, 'f', q.price < 10 ? 3 : 2) : "--");
         c1->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
@@ -553,6 +607,7 @@ void MainWindow::onTableContextMenu(const QPoint &pos) {
         m_btnHud->setChecked(!m_btnHud->isChecked());
     });
     if (m_hud) {
+        menu.addAction(QString("切换异动 HUD 样式 [当前:%1] (⌘D)").arg(m_hud->devModeLabel()), this, &MainWindow::onCycleDevMode);
         menu.addAction(QString("切换 HUD 透明度 [当前:%1] (⌘⇧U)").arg(m_hud->opacityLabel()), [this]() {
             m_hud->cycleOpacity();
             m_statusLbl->setText("HUD 透明度: " + m_hud->opacityLabel());

@@ -33,6 +33,7 @@ private slots:
     void onToggleAlwaysOnTop(bool checked);
     void onToggleFrameless(bool checked);
     void onToggleHud(bool checked);
+    void onCycleDevMode();
     void onTableContextMenu(const QPoint &pos);
 
 private:
@@ -75,5 +76,6 @@ private:
     QPushButton *m_btnAuto = nullptr;
     QPushButton *m_btnFrameless = nullptr;
     QPushButton *m_btnHud = nullptr;
+    QPushButton *m_btnDevMode = nullptr;
     QTableWidget *m_peerTable = nullptr;
 };

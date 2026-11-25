@@ -3,12 +3,46 @@
 #include <QDir>
 #include <QFile>
 #include <QGuiApplication>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QNetworkReply>
+#include <QNetworkRequest>
 #include <QPainter>
 #include <QScreen>
+#include <QUrl>
 #include <algorithm>
+#include <cmath>
 #include <sqlite3.h>
 
-HudOverlay::HudOverlay(QWidget *parent) : QWidget(parent) {
+namespace {
+double ceil2(double v) {
+    return std::ceil(v * 100.0) / 100.0;
+}
+
+double round2(double v) {
+    return std::floor(v * 100.0 + 0.5) / 100.0;
+}
+
+QColor devLevelColor(const DeviationInfo &d) {
+    if (d.triggered10 || d.triggered30) return QColor(255, 45, 45);     // 亮红：已触发
+    if (d.dev10 >= 90.0 || d.tomorrowZtTriggers) return QColor(255, 110, 0); // 亮橙：高危/明板触发
+    if (d.dev10 >= 70.0 || d.dev30 >= 140.0) return QColor(255, 210, 0);     // 金黄：逼近观察
+    return QColor(145, 165, 180);                                             // 淡灰蓝：安全
+}
+
+QString devBadgeText(const DeviationInfo &d) {
+    if (d.triggered10) return "10日严重异动!";
+    if (d.triggered30) return "30日严重异动!";
+    if (d.tomorrowZtTriggers) return "明板触发!";
+    if (d.dev10 >= 85.0) return "高危控盘";
+    if (d.dev10 >= 70.0) return "逼近异动";
+    return "安全";
+}
+} // namespace
+
+HudOverlay::HudOverlay(QWidget *parent)
+    : QWidget(parent), m_nam(new QNetworkAccessManager(this)) {
     setWindowFlags(Qt::Window
                    | Qt::FramelessWindowHint
                    | Qt::WindowStaysOnTopHint
@@ -26,6 +60,18 @@ HudOverlay::HudOverlay(QWidget *parent) : QWidget(parent) {
     reloadMarketBreadth();
 }
 
+void HudOverlay::setAgentVmIp(const QString &vmIp) {
+    if (vmIp.isEmpty()) return;
+    const QString url = QString("http://%1:19876").arg(vmIp);
+    if (m_agentBaseUrl == url) return;
+    m_agentBaseUrl = url;
+    m_indicesRequested = false;
+    fetchIndexBarsIfNeeded();
+    if (!m_snap.stockKey.isEmpty()) {
+        fetchStockBarsForDeviation(m_snap.stockKey);
+    }
+}
+
 QString HudOverlay::dbPath() const {
     return QDir::homePath() + "/.tdx_local_data/market.db";
 }
@@ -41,6 +87,34 @@ QString HudOverlay::opacityLabel() const {
     if (m_opacityIdx == 0) return "半透明";
     if (m_opacityIdx == 1) return "微透";
     return "原生不透明";
+}
+
+void HudOverlay::cycleDevMode() {
+    int next = (static_cast<int>(m_devMode) + 1) % 5;
+    m_devMode = static_cast<DevHudMode>(next);
+    update();
+}
+
+QString HudOverlay::devModeLabel() const {
+    switch (m_devMode) {
+    case DevHudMode::BottomCapsule: return "2A 贴边胶囊";
+    case DevHudMode::TopRightCard:  return "2B 右上战术卡";
+    case DevHudMode::RightRuler:    return "2D 右侧控盘尺";
+    case DevHudMode::AllInOne:      return "全开组合";
+    case DevHudMode::Off:           return "关闭";
+    }
+    return "2A 贴边胶囊";
+}
+
+QString HudOverlay::devModeShortLabel() const {
+    switch (m_devMode) {
+    case DevHudMode::BottomCapsule: return "2A";
+    case DevHudMode::TopRightCard:  return "2B";
+    case DevHudMode::RightRuler:    return "2D";
+    case DevHudMode::AllInOne:      return "全";
+    case DevHudMode::Off:           return "关";
+    }
+    return "2A";
 }
 
 void HudOverlay::setAlwaysOnTop(bool onTop) {
@@ -62,7 +136,263 @@ void HudOverlay::updateSnapshot(const HudSnapshot &snap) {
     if (!m_snap.stockKey.isEmpty() && !m_snap.cycle.valid) {
         m_snap.cycle = queryStockCycle(m_snap.stockKey);
     }
+    if (!m_snap.stockKey.isEmpty()) {
+        if (m_devCache.contains(m_snap.stockKey)) {
+            m_snap.deviation = m_devCache.value(m_snap.stockKey);
+        } else {
+            fetchStockBarsForDeviation(m_snap.stockKey);
+        }
+    }
     update();
+}
+
+void HudOverlay::requestDeviations(const QStringList &stockKeys) {
+    if (m_agentBaseUrl.isEmpty()) return;
+    fetchIndexBarsIfNeeded();
+    for (const QString &k : stockKeys) {
+        if (k.size() == 7 && !m_devCache.contains(k)) {
+            fetchStockBarsForDeviation(k);
+        }
+    }
+}
+
+DeviationInfo HudOverlay::cachedDeviation(const QString &stockKey) const {
+    return m_devCache.value(stockKey);
+}
+
+void HudOverlay::fetchIndexBarsIfNeeded() {
+    if (m_agentBaseUrl.isEmpty() || m_indicesRequested) return;
+    m_indicesRequested = true;
+
+    const QStringList idxKeys = {"1999998", "1000001", "1000688", "0399107", "0399102"};
+    for (const QString &ik : idxKeys) {
+        if (m_inFlight.contains(ik)) continue;
+        m_inFlight.insert(ik);
+        QUrl url(QString("%1/data/bars?key=%2&period=day&limit=45").arg(m_agentBaseUrl, ik));
+        QNetworkReply *reply = m_nam->get(QNetworkRequest(url));
+        connect(reply, &QNetworkReply::finished, this, [this, reply, ik]() {
+            m_inFlight.remove(ik);
+            const QByteArray raw = reply->readAll();
+            const bool ok = (reply->error() == QNetworkReply::NoError);
+            reply->deleteLater();
+            if (!ok || raw.isEmpty()) return;
+
+            const QJsonObject obj = QJsonDocument::fromJson(raw).object();
+            if (!obj.value("ok").toBool()) return;
+            QVector<DailyBarLite> bars;
+            for (const QJsonValue &v : obj.value("bars").toArray()) {
+                const QJsonObject bo = v.toObject();
+                bars.append({bo.value("date").toString().toInt(), bo.value("close").toDouble()});
+            }
+            if (!bars.isEmpty()) {
+                m_indexBars[ik] = bars;
+                recomputePendingStocks();
+            }
+        });
+    }
+}
+
+void HudOverlay::fetchStockBarsForDeviation(const QString &stockKey) {
+    if (m_agentBaseUrl.isEmpty() || stockKey.size() != 7) return;
+    fetchIndexBarsIfNeeded();
+    if (m_stockBarsCache.contains(stockKey)) {
+        DeviationInfo info = computeDeviation(stockKey, m_stockBarsCache.value(stockKey));
+        if (info.valid) {
+            m_devCache[stockKey] = info;
+            if (m_snap.stockKey == stockKey) {
+                m_snap.deviation = info;
+                update();
+            }
+            emit deviationUpdated(stockKey);
+        } else {
+            m_pendingCompute.insert(stockKey);
+        }
+        return;
+    }
+    if (m_inFlight.contains(stockKey)) return;
+    m_inFlight.insert(stockKey);
+
+    QUrl url(QString("%1/data/bars?key=%2&period=day&limit=45").arg(m_agentBaseUrl, stockKey));
+    QNetworkReply *reply = m_nam->get(QNetworkRequest(url));
+    connect(reply, &QNetworkReply::finished, this, [this, reply, stockKey]() {
+        m_inFlight.remove(stockKey);
+        const QByteArray raw = reply->readAll();
+        const bool ok = (reply->error() == QNetworkReply::NoError);
+        reply->deleteLater();
+        if (!ok || raw.isEmpty()) return;
+
+        const QJsonObject obj = QJsonDocument::fromJson(raw).object();
+        if (!obj.value("ok").toBool()) return;
+        QVector<DailyBarLite> bars;
+        for (const QJsonValue &v : obj.value("bars").toArray()) {
+            const QJsonObject bo = v.toObject();
+            bars.append({bo.value("date").toString().toInt(), bo.value("close").toDouble()});
+        }
+        if (bars.isEmpty()) return;
+        m_stockBarsCache[stockKey] = bars;
+
+        DeviationInfo info = computeDeviation(stockKey, bars);
+        if (info.valid) {
+            m_devCache[stockKey] = info;
+            if (m_snap.stockKey == stockKey) {
+                m_snap.deviation = info;
+                update();
+            }
+            emit deviationUpdated(stockKey);
+        } else {
+            m_pendingCompute.insert(stockKey);
+        }
+    });
+}
+
+void HudOverlay::recomputePendingStocks() {
+    QSet<QString> stillPending;
+    for (const QString &k : m_pendingCompute) {
+        if (!m_stockBarsCache.contains(k)) continue;
+        DeviationInfo info = computeDeviation(k, m_stockBarsCache.value(k));
+        if (info.valid) {
+            m_devCache[k] = info;
+            if (m_snap.stockKey == k) {
+                m_snap.deviation = info;
+                update();
+            }
+            emit deviationUpdated(k);
+        } else {
+            stillPending.insert(k);
+        }
+    }
+    m_pendingCompute = stillPending;
+}
+
+DeviationInfo HudOverlay::computeDeviation(const QString &stockKey, const QVector<DailyBarLite> &stkBars) const {
+    DeviationInfo out;
+    if (stockKey.size() != 7 || stkBars.size() <= 30) return out;
+
+    const QString code = stockKey.mid(1);
+    QString idxKey, fallbackKey, boardName, idxName;
+    double ztRatio = 0.10;
+    if (code.startsWith("688") || code.startsWith("689")) {
+        boardName = "科创板"; idxKey = "1000688"; idxName = "科创50"; ztRatio = 0.20;
+    } else if (code.startsWith("60")) {
+        boardName = "沪主板"; idxKey = "1999998"; idxName = "上证A指"; fallbackKey = "1000001"; ztRatio = 0.10;
+    } else if (code.startsWith("30")) {
+        boardName = "创业板"; idxKey = "0399102"; idxName = "创业板综"; ztRatio = 0.20;
+    } else if (code.startsWith("00")) {
+        boardName = "深主板"; idxKey = "0399107"; idxName = "深证A指"; ztRatio = 0.10;
+    } else {
+        return out;
+    }
+
+    QVector<DailyBarLite> idxBars = m_indexBars.value(idxKey);
+    if (idxBars.isEmpty() && !fallbackKey.isEmpty()) {
+        idxBars = m_indexBars.value(fallbackKey);
+        idxName = "上证指数";
+    }
+    if (idxBars.isEmpty()) return out;
+
+    QMap<int, double> idxMap;
+    for (const auto &b : idxBars) {
+        if (b.close > 0) idxMap[b.date] = b.close;
+    }
+
+    struct Row { int date; double c; double idx; };
+    QVector<Row> aligned;
+    aligned.reserve(stkBars.size());
+    for (const auto &b : stkBars) {
+        auto it = idxMap.constFind(b.date);
+        if (it != idxMap.constEnd() && b.close > 0 && it.value() > 0) {
+            aligned.append({b.date, b.close, it.value()});
+        }
+    }
+    const int n = aligned.size();
+    if (n <= 30) return out;
+
+    const auto &cur = aligned[n - 1];
+    auto ref = [&](int k) -> const Row & { return aligned[n - 1 - k]; };
+
+    double dArr[11] = {0};
+    double maxD10 = -1e18;
+    int maxN10 = 1;
+    int trigN10 = 0;
+    for (int k = 1; k <= 10; ++k) {
+        const auto &r = ref(k);
+        const double dk = (cur.c / r.c - cur.idx / r.idx) * 100.0;
+        dArr[k] = dk;
+        if (dk > maxD10) { maxD10 = dk; maxN10 = k; }
+        if (trigN10 == 0 && dk >= 100.0) trigN10 = k;
+    }
+    const int effN10 = (trigN10 > 0) ? trigN10 : maxN10;
+    const auto &base10 = ref(effN10);
+
+    // 30日内极值与固定30日
+    double minC30 = cur.c;
+    int lowB30Raw = 0;
+    for (int i = 0; i < 30; ++i) {
+        const double c = ref(i).c;
+        if (c < minC30) { minC30 = c; lowB30Raw = i; }
+    }
+    const int lowB30 = qMax(1, lowB30Raw);
+    const double dynD30 = (cur.c / ref(lowB30).c - cur.idx / ref(lowB30).idx) * 100.0;
+    const double fixD30 = (cur.c / ref(30).c - cur.idx / ref(30).idx) * 100.0;
+    const int effN30 = (dynD30 >= fixD30) ? lowB30 : 30;
+    const double maxD30 = qMax(dynD30, fixD30);
+    const auto &base30 = ref(effN30);
+
+    // 今日临界价
+    const double price100 = ceil2(base10.c * (cur.idx / base10.idx + 1.0));
+    const double price200 = ceil2(base30.c * (cur.idx / base30.idx + 2.0));
+
+    // 明日临界价（假设指数不变，基准范围 k=0..9）
+    double minM10 = cur.c * 2.0;
+    for (int k = 1; k <= 9; ++k) {
+        const auto &r = ref(k);
+        minM10 = qMin(minM10, r.c * (cur.idx / r.idx + 1.0));
+    }
+    const double tomorrow100 = ceil2(minM10);
+
+    // 后日临界价（假设指数不变，基准范围 k=0..8，滚出 T-9）
+    double minD2_10 = cur.c * 2.0;
+    for (int k = 1; k <= 8; ++k) {
+        const auto &r = ref(k);
+        minD2_10 = qMin(minD2_10, r.c * (cur.idx / r.idx + 1.0));
+    }
+    const double day2_100 = ceil2(minD2_10);
+
+    // 明日30日临界价
+    double minC29 = cur.c;
+    int mLowB30 = 0;
+    for (int i = 0; i < 29; ++i) {
+        const double c = ref(i).c;
+        if (c < minC29) { minC29 = c; mLowB30 = i; }
+    }
+    const double m30Dyn = ref(mLowB30).c * (cur.idx / ref(mLowB30).idx + 2.0);
+    const double m30Fix = ref(29).c * (cur.idx / ref(29).idx + 2.0);
+    const double tomorrow200 = ceil2(qMin(m30Dyn, m30Fix));
+
+    const double tomorrowZt = round2(cur.c * (1.0 + ztRatio));
+
+    out.valid = true;
+    out.date = cur.date;
+    out.close = cur.c;
+    out.ztRatio = ztRatio;
+    out.boardName = boardName;
+    out.indexName = idxName;
+    out.dev10 = dArr[effN10];
+    out.n10 = effN10;
+    out.baseDate10 = base10.date;
+    out.baseClose10 = base10.c;
+    out.triggered10 = (trigN10 > 0);
+    out.price100 = price100;
+    out.tomorrow100 = tomorrow100;
+    out.day2_100 = day2_100;
+    out.tomorrowZtPrice = tomorrowZt;
+    out.tomorrowZtTriggers = (tomorrow100 <= tomorrowZt + 1e-6);
+    out.dev30 = maxD30;
+    out.n30 = effN30;
+    out.triggered30 = (maxD30 >= 200.0);
+    out.price200 = price200;
+    out.tomorrow200 = tomorrow200;
+    return out;
 }
 
 StockCycleInfo HudOverlay::queryStockCycle(const QString &stockKey) const {
@@ -177,6 +507,203 @@ void HudOverlay::reloadMarketBreadth() {
     update();
 }
 
+// ================= 2A: 底栏贴边进度条胶囊 =================
+void HudOverlay::paintDevBottomCapsule(QPainter &p, int W, int topY, int bgAlpha, const DeviationInfo &d) const {
+    const int capH = 26;
+    const int capY = topY - capH - 1;
+    const int capX = static_cast<int>(W * 0.44);
+    const int capW = W - capX - 1;
+    const QColor lv = devLevelColor(d);
+
+    // Base dark canvas
+    p.fillRect(QRectF(capX, capY, capW, capH), QColor(8, 8, 8, qMin(235, bgAlpha)));
+
+    // Progress bar fill behind text (0% -> 100%)
+    const double frac = qBound(0.0, d.dev10 / 100.0, 1.0);
+    p.fillRect(QRectF(capX + 1, capY + 1, (capW - 2) * frac, capH - 2),
+               QColor(lv.red(), lv.green(), lv.blue(), d.triggered10 ? 95 : 52));
+
+    // Crisp border
+    p.setPen(QPen(QColor(lv.red(), lv.green(), lv.blue(), 190), 1.0));
+    p.drawRect(QRectF(capX, capY, capW, capH));
+
+    // Status badge pill on left
+    const QString badge = devBadgeText(d);
+    QFont fBadge("PingFang SC", 10, QFont::Bold);
+    p.setFont(fBadge);
+    const int badgeW = (d.triggered10 || d.triggered30) ? 94 : 68;
+    p.fillRect(QRectF(capX + 4, capY + 4, badgeW, capH - 8),
+               d.triggered10 ? QColor(200, 20, 20, 230) : QColor(lv.red(), lv.green(), lv.blue(), 45));
+    p.setPen(d.triggered10 ? QColor(255, 255, 255) : lv);
+    p.drawText(QRectF(capX + 4, capY + 4, badgeW, capH - 8), Qt::AlignCenter, badge);
+
+    // Core numbers
+    const double remPct = (d.close > 0) ? ((d.tomorrow100 / d.close - 1.0) * 100.0) : 0.0;
+    const double remBoards = remPct / (d.ztRatio * 100.0);
+    const QString ctrlHint = d.tomorrowZtTriggers
+        ? QString(" [明板触发! 控%1]").arg(d.tomorrow100 - 0.01, 0, 'f', 2)
+        : QString(" (%1%2% / %3板)").arg(remPct > 0 ? "+" : "").arg(remPct, 0, 'f', 1).arg(remBoards, 0, 'f', 1);
+
+    const QString line = QString("偏10: %1%2%(N%3)  │  今100: %4  │  明100: %5%6  │  偏30: %7%8% (价200:%9)")
+        .arg(d.dev10 > 0 ? "+" : "").arg(d.dev10, 0, 'f', 1).arg(d.n10)
+        .arg(d.price100, 0, 'f', 2)
+        .arg(d.tomorrow100, 0, 'f', 2).arg(ctrlHint)
+        .arg(d.dev30 > 0 ? "+" : "").arg(d.dev30, 0, 'f', 1)
+        .arg(d.price200, 0, 'f', 2);
+
+    QFont fBody("PingFang SC", 11, QFont::Bold);
+    p.setFont(fBody);
+    p.setPen(QColor(245, 245, 245));
+    p.drawText(QRectF(capX + badgeW + 12, capY, capW - badgeW - 18, capH), Qt::AlignLeft | Qt::AlignVCenter, line);
+}
+
+// ================= 2B: 主图右上角战术卡片 + 3日松绑推演 =================
+void HudOverlay::paintDevTopRightCard(QPainter &p, int W, int bgAlpha, const DeviationInfo &d) const {
+    const int cardW = 372;
+    const int cardH = 92;
+    const int x0 = W - cardW - 12;
+    const int y0 = 36;
+    const QColor lv = devLevelColor(d);
+
+    // Background + top accent strip
+    p.fillRect(QRectF(x0, y0, cardW, cardH), QColor(10, 8, 8, qMin(232, bgAlpha)));
+    p.fillRect(QRectF(x0, y0, cardW, 24), QColor(28, 6, 6, qMin(240, bgAlpha)));
+    p.setPen(QPen(QColor(lv.red(), lv.green(), lv.blue(), 200), 1.0));
+    p.drawRect(QRectF(x0, y0, cardW, cardH));
+
+    // Header row
+    QFont fHdr("PingFang SC", 11, QFont::Bold);
+    p.setFont(fHdr);
+    p.setPen(QColor(255, 255, 0));
+    p.drawText(QRectF(x0 + 8, y0 + 2, 180, 20), Qt::AlignLeft | Qt::AlignVCenter,
+               QString("%1 异动战术卡").arg(m_snap.stockName.isEmpty() ? m_snap.stockKey.mid(1) : m_snap.stockName));
+
+    const QString badge = QString("%1  偏10 %2%3%")
+        .arg(devBadgeText(d))
+        .arg(d.dev10 > 0 ? "+" : "").arg(d.dev10, 0, 'f', 1);
+    p.setPen(lv);
+    p.drawText(QRectF(x0 + 180, y0 + 2, cardW - 188, 20), Qt::AlignRight | Qt::AlignVCenter, badge);
+
+    // Dual Progress Bars (10d & 30d)
+    auto drawBar = [&](int by, const QString &lbl, double val, double maxV, const QColor &col, const QString &rightTxt) {
+        QFont fSmall("PingFang SC", 10);
+        p.setFont(fSmall);
+        p.setPen(QColor(210, 210, 210));
+        p.drawText(QRectF(x0 + 8, by, 34, 14), Qt::AlignLeft | Qt::AlignVCenter, lbl);
+
+        const int bx = x0 + 44;
+        const int bw = 158;
+        p.fillRect(QRectF(bx, by + 2, bw, 10), QColor(28, 28, 28));
+        p.setPen(QPen(QColor(70, 20, 20), 1.0));
+        p.drawRect(QRectF(bx, by + 2, bw, 10));
+        const double frac = qBound(0.0, val / maxV, 1.0);
+        p.fillRect(QRectF(bx + 1, by + 3, (bw - 2) * frac, 8), col);
+
+        p.setPen(col);
+        p.drawText(QRectF(bx + bw + 8, by, cardW - (bx - x0) - bw - 16, 14), Qt::AlignRight | Qt::AlignVCenter, rightTxt);
+    };
+
+    const QString r10 = QString("%1%2% (N%3 / 价%4)")
+        .arg(d.dev10 > 0 ? "+" : "").arg(d.dev10, 0, 'f', 1).arg(d.n10).arg(d.price100, 0, 'f', 2);
+    drawBar(y0 + 30, "10日", d.dev10, 100.0, lv, r10);
+
+    const QColor col30 = d.triggered30 ? QColor(255, 45, 45)
+                        : (d.dev30 >= 140.0 ? QColor(255, 160, 0) : QColor(150, 150, 170));
+    const QString r30 = QString("%1%2% (价200: %3)")
+        .arg(d.dev30 > 0 ? "+" : "").arg(d.dev30, 0, 'f', 1).arg(d.price200, 0, 'f', 2);
+    drawBar(y0 + 49, "30日", d.dev30, 200.0, col30, r30);
+
+    // 3-Day Rolling Forecast Row (今100 → 明100 → 后100)
+    const QString relaxTag = (d.day2_100 > d.tomorrow100 + 0.05) ? "↑松绑" : "持平";
+    const QString forecast = QString("3日红线:  今 %1 → 明 %2%3 → 后 %4 (%5)")
+        .arg(d.price100, 0, 'f', 2)
+        .arg(d.tomorrow100, 0, 'f', 2)
+        .arg(d.tomorrowZtTriggers ? "(板触!)" : "")
+        .arg(d.day2_100, 0, 'f', 2)
+        .arg(relaxTag);
+    QFont fCast("PingFang SC", 10, QFont::Bold);
+    p.setFont(fCast);
+    p.setPen(d.tomorrowZtTriggers ? QColor(255, 120, 60) : QColor(0, 235, 255));
+    p.drawText(QRectF(x0 + 8, y0 + 69, cardW - 16, 18), Qt::AlignLeft | Qt::AlignVCenter, forecast);
+}
+
+// ================= 2D: 主图右侧控盘三价标尺 =================
+void HudOverlay::paintDevRightRuler(QPainter &p, int W, int topY, int bgAlpha, const DeviationInfo &d) const {
+    const int boxW = 196;
+    const int boxH = 152;
+    const int x0 = W - boxW - 12;
+    const int y0 = qMax(140, (topY - boxH) / 2);
+    const QColor lv = devLevelColor(d);
+
+    p.fillRect(QRectF(x0, y0, boxW, boxH), QColor(10, 8, 8, qMin(228, bgAlpha)));
+    p.setPen(QPen(QColor(lv.red(), lv.green(), lv.blue(), 190), 1.0));
+    p.drawRect(QRectF(x0, y0, boxW, boxH));
+
+    // Title
+    QFont fHdr("PingFang SC", 10, QFont::Bold);
+    p.setFont(fHdr);
+    p.fillRect(QRectF(x0 + 1, y0 + 1, boxW - 2, 20), QColor(26, 6, 6, 230));
+    p.setPen(lv);
+    p.drawText(QRectF(x0 + 6, y0 + 1, boxW - 12, 20), Qt::AlignLeft | Qt::AlignVCenter,
+               QString("控盘标尺 · %1").arg(devBadgeText(d)));
+
+    // Compute vertical scale covering [curClose, tomorrowZtPrice, tomorrow100]
+    const double curP = d.close;
+    const double ztP = d.tomorrowZtPrice;
+    const double redP = d.tomorrow100;
+    const double minP = qMin(curP, qMin(ztP, redP)) * 0.985;
+    const double maxP = qMax(curP, qMax(ztP, redP)) * 1.015;
+    const double span = qMax(0.05, maxP - minP);
+
+    const int railX = x0 + 18;
+    const int railT = y0 + 32;
+    const int railB = y0 + boxH - 26;
+    const int railH = railB - railT;
+    auto yFor = [&](double price) -> double {
+        return railB - qBound(0.0, (price - minP) / span, 1.0) * railH;
+    };
+
+    // Vertical rail + danger zone above redP
+    p.fillRect(QRectF(railX - 2, railT, 4, railH), QColor(50, 50, 50));
+    const double yRed = yFor(redP);
+    p.fillRect(QRectF(railX - 3, railT, 6, qMax(0.0, yRed - railT)), QColor(220, 35, 35, 190));
+
+    struct Mark { double price; double y; QString label; QColor col; };
+    QVector<Mark> marks = {
+        {ztP,  yFor(ztP),  QString("明涨停 %1").arg(ztP, 0, 'f', 2), QColor(255, 80, 160)},
+        {redP, yRed,       QString("红线 %1 (控%2)").arg(redP, 0, 'f', 2).arg(redP - 0.01, 0, 'f', 2), QColor(255, 60, 40)},
+        {curP, yFor(curP), QString("现价 %1").arg(curP, 0, 'f', 2), QColor(255, 255, 0)}
+    };
+    std::sort(marks.begin(), marks.end(), [](const Mark &a, const Mark &b) { return a.y < b.y; });
+    // Avoid overlapping labels vertically
+    for (int i = 1; i < marks.size(); ++i) {
+        if (marks[i].y - marks[i - 1].y < 20.0) {
+            marks[i].y = marks[i - 1].y + 20.0;
+        }
+    }
+
+    QFont fLbl("PingFang SC", 10, QFont::Bold);
+    p.setFont(fLbl);
+    for (const auto &m : marks) {
+        const double actualY = yFor(m.price);
+        p.setPen(QPen(m.col, 1.5));
+        p.drawLine(QPointF(railX - 6, actualY), QPointF(railX + 10, actualY));
+        p.setPen(m.col);
+        p.drawText(QRectF(railX + 14, m.y - 9, boxW - 36, 18), Qt::AlignLeft | Qt::AlignVCenter, m.label);
+    }
+
+    // Bottom distance summary
+    const double diff = redP - curP;
+    const double diffPct = (curP > 0) ? (diff / curP * 100.0) : 0.0;
+    QFont fFoot("PingFang SC", 10);
+    p.setFont(fFoot);
+    p.setPen(diff <= 0 ? QColor(255, 60, 60) : QColor(0, 235, 255));
+    p.drawText(QRectF(x0 + 6, y0 + boxH - 20, boxW - 12, 18), Qt::AlignCenter,
+               QString("距明红线: %1%2 (%3%4%)")
+                   .arg(diff > 0 ? "+" : "").arg(diff, 0, 'f', 2)
+                   .arg(diffPct > 0 ? "+" : "").arg(diffPct, 0, 'f', 1));
+}
+
 void HudOverlay::paintEvent(QPaintEvent *) {
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing, true);
@@ -246,7 +773,6 @@ void HudOverlay::paintEvent(QPaintEvent *) {
         const double chartW = qMax(60.0, chartR - chartL);
         const double chartH = qMax(40.0, chartB - chartT);
 
-        // Reference dashed lines at 4000 and 5000
         auto drawRefLine = [&](int val, const QColor &col, const QString &lbl) {
             const double y = chartB - (val / 5600.0) * chartH;
             QPen rp(col, 1.0, Qt::DashLine);
@@ -273,7 +799,6 @@ void HudOverlay::paintEvent(QPaintEvent *) {
             if (i == cnt - 1) bc = bc.lighter(115);
             p.fillRect(QRectF(bx, by, bw, bh), bc);
 
-            // Date labels on every 4th bar + last bar
             if (i == 0 || i == cnt - 1 || i % 4 == 0) {
                 const QString ds = QString::number(bi.date);
                 const QString sMd = ds.size() == 8 ? (ds.mid(4, 2) + "/" + ds.mid(6, 2)) : ds;
@@ -312,13 +837,11 @@ void HudOverlay::paintEvent(QPaintEvent *) {
             const QString loD = QString::number(cy.lowDate);
             const QString loMd = loD.size() == 8 ? (loD.mid(4, 2) + "-" + loD.mid(6, 2)) : loD;
 
-            // Row 1: Big Drawdown highlight
             p.setFont(fBig);
             p.setPen(cy.drawdownPct <= -40.0 ? QColor(0, 230, 0) : QColor(255, 215, 0));
             p.drawText(QRectF(x0, topY + 26, cw, 20), Qt::AlignLeft | Qt::AlignVCenter,
                        QString("6月高点回撤: %1%").arg(cy.drawdownPct, 0, 'f', 1));
 
-            // Row 2: Peak & Low prices
             p.setFont(fBody);
             p.setPen(QColor(210, 210, 210));
             p.drawText(QRectF(x0, topY + 48, cw, 18), Qt::AlignLeft | Qt::AlignVCenter,
@@ -326,7 +849,6 @@ void HudOverlay::paintEvent(QPaintEvent *) {
                            .arg(cy.peakHigh, 0, 'f', 2).arg(pkMd)
                            .arg(cy.rangeLow, 0, 'f', 2).arg(loMd));
 
-            // Row 3: 5d / 20d / MA20 bias
             p.setPen(QColor(185, 185, 185));
             p.drawText(QRectF(x0, topY + 68, cw, 18), Qt::AlignLeft | Qt::AlignVCenter,
                        QString("5日: %1%2%   20日: %3%4%   距MA20: %5%6%")
@@ -334,7 +856,6 @@ void HudOverlay::paintEvent(QPaintEvent *) {
                            .arg(cy.chg20dPct > 0 ? "+" : "").arg(cy.chg20dPct, 0, 'f', 1)
                            .arg(cy.ma20BiasPct > 0 ? "+" : "").arg(cy.ma20BiasPct, 0, 'f', 1));
 
-            // Row 4: Native TDX horizontal position gauge (Low -> Current -> High)
             const double gaugeY = topY + 92.0;
             const double gaugeH = 10.0;
             p.fillRect(QRectF(x0, gaugeY, cw, gaugeH), QColor(28, 28, 28));
@@ -397,7 +918,6 @@ void HudOverlay::paintEvent(QPaintEvent *) {
             p.setPen(QColor(255, 255, 0));
             p.drawText(QRectF(x0 + 30, ry, 86, rowH), Qt::AlignLeft | Qt::AlignVCenter, it.q.name);
 
-            // Mini pct bar
             const double barX = x0 + 118;
             const double barMaxW = qMax(20.0, cw - 190.0);
             const double barW = qBound(2.0, (qAbs(it.q.pct) / 10.0) * barMaxW, barMaxW);
@@ -407,6 +927,29 @@ void HudOverlay::paintEvent(QPaintEvent *) {
             p.setPen(pCol);
             p.drawText(QRectF(x0 + cw - 68, ry, 68, rowH), Qt::AlignRight | Qt::AlignVCenter,
                        QString("%1%2%").arg(it.q.pct > 0 ? "+" : "").arg(it.q.pct, 0, 'f', 2));
+        }
+    }
+
+    // ================= FLOATING SEVERE DEVIATION OVERLAYS (2A / 2B / 2D / ALL) =================
+    if (m_devMode != DevHudMode::Off && m_snap.deviation.valid) {
+        const auto &d = m_snap.deviation;
+        switch (m_devMode) {
+        case DevHudMode::BottomCapsule:
+            paintDevBottomCapsule(p, W, topY, bgAlpha, d);
+            break;
+        case DevHudMode::TopRightCard:
+            paintDevTopRightCard(p, W, bgAlpha, d);
+            break;
+        case DevHudMode::RightRuler:
+            paintDevRightRuler(p, W, topY, bgAlpha, d);
+            break;
+        case DevHudMode::AllInOne:
+            paintDevBottomCapsule(p, W, topY, bgAlpha, d);
+            paintDevTopRightCard(p, W, bgAlpha, d);
+            paintDevRightRuler(p, W, topY, bgAlpha, d);
+            break;
+        case DevHudMode::Off:
+            break;
         }
     }
 }
