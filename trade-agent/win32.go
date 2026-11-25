@@ -28,6 +28,13 @@ var (
 	procSetForegroundWindow = user32.NewProc("SetForegroundWindow")
 	procShowWindow          = user32.NewProc("ShowWindow")
 	procKeybdEvent          = user32.NewProc("keybd_event")
+	procSetFocus            = user32.NewProc("SetFocus")
+	procOpenClipboard       = user32.NewProc("OpenClipboard")
+	procCloseClipboard      = user32.NewProc("CloseClipboard")
+	procEmptyClipboard      = user32.NewProc("EmptyClipboard")
+	procGetClipboardData    = user32.NewProc("GetClipboardData")
+	procGlobalLock          = kernel32.NewProc("GlobalLock")
+	procGlobalUnlock        = kernel32.NewProc("GlobalUnlock")
 	procCreateToolhelp32    = kernel32.NewProc("CreateToolhelp32Snapshot")
 	procProcess32FirstW     = kernel32.NewProc("Process32FirstW")
 	procProcess32NextW      = kernel32.NewProc("Process32NextW")
@@ -39,14 +46,20 @@ const (
 	wmSetText       = 0x000C
 	wmKeyDown       = 0x0100
 	wmKeyUp         = 0x0101
+	wmLButtonDown   = 0x0201
+	wmLButtonUp     = 0x0202
+	bmClick         = 0x00F5
 	swRestore       = 9
 	keyeventfKeyUp  = 0x0002
+	cfUnicodeText   = 13
 
-	vkF1 = 0x70
-	vkF2 = 0x71
-	vkF3 = 0x72
-	vkF4 = 0x73
-	vkF5 = 0x74
+	vkControl = 0x11
+	vkC       = 0x43
+	vkF1      = 0x70
+	vkF2      = 0x71
+	vkF3      = 0x72
+	vkF4      = 0x73
+	vkF5      = 0x74
 )
 
 type Rect struct {
@@ -308,4 +321,185 @@ func findVisibleEditByCtrlID(parentHwnd uintptr, ctrlID int32) (WinNode, bool) {
 		}
 	}
 	return WinNode{}, false
+}
+
+func findVisibleCtrlByIDAndClass(parentHwnd uintptr, ctrlID int32, className string) (WinNode, bool) {
+	children := enumChildNodes(parentHwnd, false)
+	for _, ch := range children {
+		if ch.CtrlID == ctrlID && (className == "" || strings.EqualFold(ch.Class, className)) {
+			return ch, true
+		}
+	}
+	return WinNode{}, false
+}
+
+func clickButton(hwnd uintptr) {
+	if hwnd == 0 {
+		return
+	}
+	procPostMessageW.Call(hwnd, bmClick, 0, 0)
+}
+
+func clearClipboard() {
+	if r, _, _ := procOpenClipboard.Call(0); r != 0 {
+		procEmptyClipboard.Call()
+		procCloseClipboard.Call()
+	}
+}
+
+func readClipboardText() string {
+	if r, _, _ := procOpenClipboard.Call(0); r == 0 {
+		return ""
+	}
+	defer procCloseClipboard.Call()
+	h, _, _ := procGetClipboardData.Call(cfUnicodeText)
+	if h == 0 {
+		return ""
+	}
+	ptr, _, _ := procGlobalLock.Call(h)
+	if ptr == 0 {
+		return ""
+	}
+	defer procGlobalUnlock.Call(h)
+	// Convert null-terminated UTF-16LE buffer safely (cap at 512K chars)
+	var u16 []uint16
+	const maxChars = 512 * 1024
+	for i := 0; i < maxChars; i++ {
+		ch := *(*uint16)(unsafe.Pointer(ptr + uintptr(i)*2))
+		if ch == 0 {
+			break
+		}
+		u16 = append(u16, ch)
+	}
+	return syscall.UTF16ToString(u16)
+}
+
+func copyGridTSV(pid uint32, mainHwnd uintptr) (string, []WinNode, error) {
+	grid, ok := findVisibleCtrlByIDAndClass(mainHwnd, 1047, "CVirtualGridCtrl")
+	if !ok {
+		return "", nil, fmt.Errorf("CVirtualGridCtrl (id=1047) not found on current panel")
+	}
+	clearClipboard()
+	focusWindow(mainHwnd)
+	time.Sleep(60 * time.Millisecond)
+	// Click inside grid to focus it cleanly
+	procSendMessageW.Call(grid.Hwnd, wmLButtonDown, 1, uintptr(10|(10<<16)))
+	procSendMessageW.Call(grid.Hwnd, wmLButtonUp, 0, uintptr(10|(10<<16)))
+	time.Sleep(80 * time.Millisecond)
+
+	// Send Ctrl+C
+	procKeybdEvent.Call(vkControl, 0, 0, 0)
+	time.Sleep(20 * time.Millisecond)
+	procKeybdEvent.Call(vkC, 0, 0, 0)
+	time.Sleep(30 * time.Millisecond)
+	procKeybdEvent.Call(vkC, 0, keyeventfKeyUp, 0)
+	procKeybdEvent.Call(vkControl, 0, keyeventfKeyUp, 0)
+	time.Sleep(220 * time.Millisecond)
+
+	if dlgs := findVisibleDialogs(pid); len(dlgs) > 0 {
+		return "", dlgs, fmt.Errorf("dialog appeared during grid copy (e.g. captcha/notice)")
+	}
+	return readClipboardText(), nil, nil
+}
+
+func parseTSVRows(tsv string) ([]string, []map[string]string) {
+	tsv = strings.ReplaceAll(tsv, "\r\n", "\n")
+	tsv = strings.TrimSpace(tsv)
+	if tsv == "" {
+		return nil, nil
+	}
+	lines := strings.Split(tsv, "\n")
+	if len(lines) == 0 {
+		return nil, nil
+	}
+	headers := strings.Split(lines[0], "\t")
+	for i := range headers {
+		headers[i] = strings.TrimSpace(headers[i])
+	}
+	rows := make([]map[string]string, 0, len(lines)-1)
+	for _, ln := range lines[1:] {
+		if strings.TrimSpace(ln) == "" {
+			continue
+		}
+		cols := strings.Split(ln, "\t")
+		row := make(map[string]string, len(headers))
+		for i, h := range headers {
+			if h == "" {
+				continue
+			}
+			val := ""
+			if i < len(cols) {
+				val = strings.TrimSpace(cols[i])
+			}
+			row[h] = val
+		}
+		rows = append(rows, row)
+	}
+	return headers, rows
+}
+
+type DialogSnapshot struct {
+	Title   string   `json:"title"`
+	Texts   []string `json:"texts"`
+	Buttons []string `json:"buttons"`
+	Hwnd    uintptr  `json:"hwnd"`
+}
+
+func inspectDialog(dlg WinNode) (DialogSnapshot, []WinNode) {
+	children := enumChildNodes(dlg.Hwnd, false)
+	snap := DialogSnapshot{
+		Title: dlg.Text,
+		Hwnd:  dlg.Hwnd,
+	}
+	for _, ch := range children {
+		if ch.Text == "" {
+			continue
+		}
+		if strings.EqualFold(ch.Class, "Static") {
+			snap.Texts = append(snap.Texts, ch.Text)
+		} else if strings.EqualFold(ch.Class, "Button") {
+			snap.Buttons = append(snap.Buttons, fmt.Sprintf("%s(id=%d)", ch.Text, ch.CtrlID))
+		}
+	}
+	return snap, children
+}
+
+func dismissDialog(dlg WinNode, accept bool) (DialogSnapshot, string) {
+	snap, children := inspectDialog(dlg)
+	var target WinNode
+	found := false
+	for _, ch := range children {
+		if !strings.EqualFold(ch.Class, "Button") {
+			continue
+		}
+		t := ch.Text
+		if accept {
+			if ch.CtrlID == 6 || ch.CtrlID == 1 || strings.Contains(t, "是") || strings.Contains(t, "确定") {
+				target = ch
+				found = true
+				break
+			}
+		} else {
+			if ch.CtrlID == 7 || ch.CtrlID == 2 || strings.Contains(t, "否") || strings.Contains(t, "取消") {
+				target = ch
+				found = true
+				break
+			}
+		}
+	}
+	if !found && accept {
+		// Fallback to single OK/confirm button
+		for _, ch := range children {
+			if strings.EqualFold(ch.Class, "Button") && ch.Enabled {
+				target = ch
+				found = true
+				break
+			}
+		}
+	}
+	if found {
+		clickButton(target.Hwnd)
+		return snap, fmt.Sprintf("clicked %s (id=%d)", target.Text, target.CtrlID)
+	}
+	return snap, "no matching button"
 }
