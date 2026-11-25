@@ -7,16 +7,47 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 )
 
 const (
-	agentVersion = "0.3.0"
+	agentVersion = "0.4.0"
 	defaultAddr  = "0.0.0.0:19877"
 	xiadanExe    = "xiadan.exe"
 )
+
+var contractNoRe = regexp.MustCompile(`合同编号[：:]\s*([0-9A-Za-z_-]+)`)
+
+func extractContractNo(texts []string) string {
+	for _, t := range texts {
+		if m := contractNoRe.FindStringSubmatch(t); len(m) == 2 {
+			return m[1]
+		}
+	}
+	return ""
+}
+
+func resolveOrderNav(orderType, side string) (navKey, normSide, expectHint string, err error) {
+	ot := strings.ToLower(strings.TrimSpace(orderType))
+	if ot == "" {
+		ot = strings.ToLower(strings.TrimSpace(side))
+	}
+	switch ot {
+	case "buy", "collateral_buy":
+		return "F1", "buy", "买入", nil
+	case "sell", "collateral_sell":
+		return "F2", "sell", "卖出", nil
+	case "margin_buy":
+		return "F7", "buy", "融资买入", nil
+	case "repay_by_sell":
+		return "F8", "sell", "卖券还款", nil
+	default:
+		return "", "", "", fmt.Errorf("invalid order_type/side: %q (use buy|sell|collateral_buy|collateral_sell|margin_buy|repay_by_sell)", ot)
+	}
+}
 
 var (
 	startTime = time.Now()
@@ -324,11 +355,12 @@ func handleGrid(w http.ResponseWriter, r *http.Request) {
 }
 
 type SubmitOrderReq struct {
-	Side              string `json:"side"`                // "buy" or "sell"
+	OrderType         string `json:"order_type"`          // collateral_buy|collateral_sell|margin_buy|repay_by_sell (or side: buy|sell)
+	Side              string `json:"side"`                // legacy alias: "buy" or "sell"
 	Code              string `json:"code"`                // 6 digits
 	Price             string `json:"price"`               // e.g. "11.07"
 	Qty               string `json:"qty"`                 // e.g. "100"
-	SkipNav           bool   `json:"skip_nav"`            // stay on current panel (e.g. 融资买入)
+	SkipNav           bool   `json:"skip_nav"`            // stay on current panel
 	ExpectedPanel     string `json:"expected_panel"`      // optional verify against id=1478
 	ConfirmLive       bool   `json:"confirm_live"`        // MUST be true to actually click submit
 	AutoConfirmDialog bool   `json:"auto_confirm_dialog"` // auto-click Yes/OK on standard order confirm & result popups
@@ -349,18 +381,22 @@ func handleOrderSubmit(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, map[string]any{"ok": false, "err": "confirm_live=true required for live order submission"})
 		return
 	}
-	req.Side = strings.ToLower(strings.TrimSpace(req.Side))
+	navKey, normSide, expectHint, err := resolveOrderNav(req.OrderType, req.Side)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "err": err.Error()})
+		return
+	}
 	req.Code = strings.TrimSpace(req.Code)
 	req.Price = strings.TrimSpace(req.Price)
 	req.Qty = strings.TrimSpace(req.Qty)
-	if (req.Side != "buy" && req.Side != "sell") || len(req.Code) != 6 || req.Price == "" || req.Qty == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "err": "side(buy|sell), 6-digit code, price, and qty are all required"})
+	if len(req.Code) != 6 || req.Price == "" || req.Qty == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "err": "6-digit code, price, and qty are all required"})
 		return
 	}
 
 	priceVal, _ := strconv.ParseFloat(req.Price, 64)
 	qtyVal, _ := strconv.Atoi(req.Qty)
-	if err := riskMgr.CheckPrefill(req.Side, req.Code, priceVal, qtyVal, req.IdempotencyKey); err != nil {
+	if err := riskMgr.CheckPrefill(normSide, req.Code, priceVal, qtyVal, req.IdempotencyKey); err != nil {
 		riskMgr.LogAudit("order_submit_blocked", false, req, err.Error())
 		writeJSON(w, http.StatusForbidden, map[string]any{"ok": false, "err": err.Error()})
 		return
@@ -383,20 +419,20 @@ func handleOrderSubmit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !req.SkipNav {
-		navKey := "F1"
-		if req.Side == "sell" {
-			navKey = "F2"
-		}
 		_ = sendNavKey(mainWin.Hwnd, navKey)
-		time.Sleep(180 * time.Millisecond)
+		time.Sleep(220 * time.Millisecond)
 	}
 
 	panelTitle := ""
 	if pNode, ok := findVisibleCtrlByIDAndClass(mainWin.Hwnd, 1478, "Static"); ok {
 		panelTitle = pNode.Text
 	}
-	if req.ExpectedPanel != "" && !strings.Contains(panelTitle, req.ExpectedPanel) {
-		errMsg := fmt.Sprintf("panel mismatch: got %q, expected %q", panelTitle, req.ExpectedPanel)
+	wantPanel := req.ExpectedPanel
+	if wantPanel == "" && !req.SkipNav && expectHint != "" {
+		wantPanel = expectHint
+	}
+	if wantPanel != "" && !strings.Contains(panelTitle, wantPanel) {
+		errMsg := fmt.Sprintf("panel mismatch: got %q, expected %q", panelTitle, wantPanel)
 		riskMgr.LogAudit("order_submit_panel_mismatch", false, req, errMsg)
 		writeJSON(w, http.StatusConflict, map[string]any{"ok": false, "err": errMsg, "panel_title": panelTitle})
 		return
@@ -412,7 +448,7 @@ func handleOrderSubmit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	setWindowText(codeEdit.Hwnd, req.Code)
-	time.Sleep(300 * time.Millisecond)
+	time.Sleep(320 * time.Millisecond)
 	setWindowText(priceEdit.Hwnd, req.Price)
 	time.Sleep(100 * time.Millisecond)
 	setWindowText(qtyEdit.Hwnd, req.Qty)
@@ -429,15 +465,26 @@ func handleOrderSubmit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	clickButton(submitBtn.Hwnd)
-	time.Sleep(350 * time.Millisecond)
 
 	var dialogLog []map[string]any
-	for step := 0; step < 3; step++ {
-		dlgs := findVisibleDialogs(pid)
+	contractNo := ""
+	for step := 0; step < 5; step++ {
+		// Poll briefly up to 900ms for each popup/receipt dialog
+		var dlgs []WinNode
+		for wait := 0; wait < 9; wait++ {
+			time.Sleep(100 * time.Millisecond)
+			dlgs = findVisibleDialogs(pid)
+			if len(dlgs) > 0 {
+				break
+			}
+		}
 		if len(dlgs) == 0 {
 			break
 		}
 		snap, _ := inspectDialog(dlgs[0])
+		if cn := extractContractNo(snap.Texts); cn != "" {
+			contractNo = cn
+		}
 		joined := strings.Join(snap.Texts, " ")
 		if strings.Contains(joined, "验证码") {
 			dialogLog = append(dialogLog, map[string]any{"dialog": snap, "action": "stopped_captcha"})
@@ -446,17 +493,20 @@ func handleOrderSubmit(w http.ResponseWriter, r *http.Request) {
 		if req.AutoConfirmDialog {
 			_, act := dismissDialog(dlgs[0], true)
 			dialogLog = append(dialogLog, map[string]any{"dialog": snap, "action": act})
-			time.Sleep(400 * time.Millisecond)
+			if contractNo != "" {
+				break
+			}
 		} else {
 			dialogLog = append(dialogLog, map[string]any{"dialog": snap, "action": "left_open_for_manual"})
 			break
 		}
 	}
 
-	riskMgr.LogAudit("order_submit", true, map[string]any{"req": req, "panel": panelTitle, "dialogs": dialogLog}, "")
+	riskMgr.LogAudit("order_submit", true, map[string]any{"req": req, "panel": panelTitle, "contract_no": contractNo, "dialogs": dialogLog}, "")
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":          true,
 		"panel_title": panelTitle,
+		"contract_no": contractNo,
 		"readback":    map[string]string{"code": rbCode, "price": rbPrice, "qty": rbQty},
 		"dialogs":     dialogLog,
 	})
@@ -505,15 +555,25 @@ func handleOrderCancel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	clickButton(btn.Hwnd)
-	time.Sleep(350 * time.Millisecond)
 
 	var dialogLog []map[string]any
-	for step := 0; step < 3; step++ {
-		dlgs := findVisibleDialogs(pid)
+	contractNo := ""
+	for step := 0; step < 4; step++ {
+		var dlgs []WinNode
+		for wait := 0; wait < 9; wait++ {
+			time.Sleep(100 * time.Millisecond)
+			dlgs = findVisibleDialogs(pid)
+			if len(dlgs) > 0 {
+				break
+			}
+		}
 		if len(dlgs) == 0 {
 			break
 		}
 		snap, _ := inspectDialog(dlgs[0])
+		if cn := extractContractNo(snap.Texts); cn != "" {
+			contractNo = cn
+		}
 		joined := strings.Join(snap.Texts, " ")
 		if strings.Contains(joined, "验证码") {
 			dialogLog = append(dialogLog, map[string]any{"dialog": snap, "action": "stopped_captcha"})
@@ -522,14 +582,82 @@ func handleOrderCancel(w http.ResponseWriter, r *http.Request) {
 		if req.AutoConfirmDialog {
 			_, act := dismissDialog(dlgs[0], true)
 			dialogLog = append(dialogLog, map[string]any{"dialog": snap, "action": act})
-			time.Sleep(350 * time.Millisecond)
+			if contractNo != "" {
+				break
+			}
 		} else {
 			dialogLog = append(dialogLog, map[string]any{"dialog": snap, "action": "left_open_for_manual"})
 			break
 		}
 	}
-	riskMgr.LogAudit("order_cancel", true, map[string]any{"req": req, "dialogs": dialogLog}, "")
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "action": req.Action, "dialogs": dialogLog})
+	riskMgr.LogAudit("order_cancel", true, map[string]any{"req": req, "contract_no": contractNo, "dialogs": dialogLog}, "")
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "action": req.Action, "contract_no": contractNo, "dialogs": dialogLog})
+}
+
+// GET /stock/capacity?order_type=collateral_buy|margin_buy|collateral_sell|repay_by_sell&code=601857&price=11.07
+// Zero-captcha read-only query of buyable/sellable shares and margin metadata, then resets the form.
+func handleStockCapacity(w http.ResponseWriter, r *http.Request) {
+	orderType := r.URL.Query().Get("order_type")
+	code := strings.TrimSpace(r.URL.Query().Get("code"))
+	price := strings.TrimSpace(r.URL.Query().Get("price"))
+	if len(code) != 6 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "err": "6-digit code required"})
+		return
+	}
+	navKey, _, _, err := resolveOrderNav(orderType, "buy")
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "err": err.Error()})
+		return
+	}
+
+	pid := findProcessPID(xiadanExe)
+	mainWin, ok := findMainXiadanWindow(pid)
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]any{"ok": false, "err": "xiadan window not found"})
+		return
+	}
+	_ = sendNavKey(mainWin.Hwnd, navKey)
+	time.Sleep(220 * time.Millisecond)
+
+	codeEdit, okC := findVisibleEditByCtrlID(mainWin.Hwnd, 1032)
+	if !okC {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"ok": false, "err": "code edit (1032) not found"})
+		return
+	}
+	setWindowText(codeEdit.Hwnd, code)
+	time.Sleep(350 * time.Millisecond)
+	if price != "" {
+		if priceEdit, okP := findVisibleEditByCtrlID(mainWin.Hwnd, 1033); okP {
+			setWindowText(priceEdit.Hwnd, price)
+			time.Sleep(180 * time.Millisecond)
+		}
+	}
+
+	readField := func(id int32, cls string) string {
+		if n, ok := findVisibleCtrlByIDAndClass(mainWin.Hwnd, id, cls); ok {
+			return n.Text
+		}
+		return ""
+	}
+	resp := map[string]any{
+		"ok":                  true,
+		"order_type":          orderType,
+		"panel_title":         readField(1478, "Static"),
+		"code":                code,
+		"name":                readField(1036, "Static"),
+		"price":               readField(1033, "Edit"),
+		"max_qty":             readField(1018, "Static"),
+		"maintenance_ratio":   readField(3004, "Edit"),
+		"conversion_rate":     readField(3401, "Edit"),
+		"concentration_group": readField(3402, "Edit"),
+		"is_margin_target":    readField(3404, "Edit"),
+	}
+
+	// Clean up form via 重填 (1007)
+	if resetBtn, okR := findVisibleCtrlByIDAndClass(mainWin.Hwnd, 1007, "Button"); okR {
+		clickButton(resetBtn.Hwnd)
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func handleDialogDismiss(w http.ResponseWriter, r *http.Request) {
@@ -601,6 +729,7 @@ func main() {
 	mux.HandleFunc("/read/texts", withAuth(handleReadTexts))
 	mux.HandleFunc("/grid", withAuth(handleGrid))
 	mux.HandleFunc("/screenshot", withAuth(handleScreenshot))
+	mux.HandleFunc("/stock/capacity", withAuth(handleStockCapacity))
 	mux.HandleFunc("/focus", withAuth(handleFocus))
 	mux.HandleFunc("/nav", withAuth(handleNav))
 	mux.HandleFunc("/prefill", withAuth(handlePrefill))

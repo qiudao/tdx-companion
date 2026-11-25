@@ -74,6 +74,9 @@ const (
 	vkF3      = 0x72
 	vkF4      = 0x73
 	vkF5      = 0x74
+	vkF6      = 0x75
+	vkF7      = 0x76
+	vkF8      = 0x77
 )
 
 type Rect struct {
@@ -315,8 +318,14 @@ func sendNavKey(hwnd uintptr, keyName string) error {
 		vk = vkF4
 	case "F5":
 		vk = vkF5
+	case "F6":
+		vk = vkF6
+	case "F7":
+		vk = vkF7
+	case "F8":
+		vk = vkF8
 	default:
-		return fmt.Errorf("unsupported nav key: %s (expected F1..F5)", keyName)
+		return fmt.Errorf("unsupported nav key: %s (expected F1..F8)", keyName)
 	}
 	focusWindow(hwnd)
 	time.Sleep(80 * time.Millisecond)
