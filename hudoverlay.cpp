@@ -2,6 +2,7 @@
 
 #include <QDir>
 #include <QFile>
+#include <QTimer>
 #include <QGuiApplication>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -63,9 +64,11 @@ HudOverlay::HudOverlay(QWidget *parent)
 void HudOverlay::setAgentVmIp(const QString &vmIp) {
     if (vmIp.isEmpty()) return;
     const QString url = QString("http://%1:19876").arg(vmIp);
-    if (m_agentBaseUrl == url) return;
+    if (m_agentBaseUrl == url) {
+        fetchIndexBarsIfNeeded();
+        return;
+    }
     m_agentBaseUrl = url;
-    m_indicesRequested = false;
     fetchIndexBarsIfNeeded();
     if (!m_snap.stockKey.isEmpty()) {
         fetchStockBarsForDeviation(m_snap.stockKey);
@@ -161,21 +164,23 @@ DeviationInfo HudOverlay::cachedDeviation(const QString &stockKey) const {
 }
 
 void HudOverlay::fetchIndexBarsIfNeeded() {
-    if (m_agentBaseUrl.isEmpty() || m_indicesRequested) return;
-    m_indicesRequested = true;
+    if (m_agentBaseUrl.isEmpty()) return;
 
     const QStringList idxKeys = {"1999998", "1000001", "1000688", "0399107", "0399102"};
     for (const QString &ik : idxKeys) {
-        if (m_inFlight.contains(ik)) continue;
+        if (m_indexBars.contains(ik) || m_inFlight.contains(ik)) continue;
         m_inFlight.insert(ik);
         QUrl url(QString("%1/data/bars?key=%2&period=day&limit=45").arg(m_agentBaseUrl, ik));
         QNetworkReply *reply = m_nam->get(QNetworkRequest(url));
         connect(reply, &QNetworkReply::finished, this, [this, reply, ik]() {
             m_inFlight.remove(ik);
             const QByteArray raw = reply->readAll();
-            const bool ok = (reply->error() == QNetworkReply::NoError);
+            const auto err = reply->error();
             reply->deleteLater();
-            if (!ok || raw.isEmpty()) return;
+            if (err != QNetworkReply::NoError || raw.isEmpty()) {
+                QTimer::singleShot(800, this, [this]() { fetchIndexBarsIfNeeded(); });
+                return;
+            }
 
             const QJsonObject obj = QJsonDocument::fromJson(raw).object();
             if (!obj.value("ok").toBool()) return;
@@ -246,22 +251,28 @@ void HudOverlay::fetchStockBarsForDeviation(const QString &stockKey) {
 }
 
 void HudOverlay::recomputePendingStocks() {
-    QSet<QString> stillPending;
-    for (const QString &k : m_pendingCompute) {
+    const QSet<QString> todo = m_pendingCompute;
+    m_pendingCompute.clear();
+    QStringList updatedKeys;
+    for (const QString &k : todo) {
         if (!m_stockBarsCache.contains(k)) continue;
         DeviationInfo info = computeDeviation(k, m_stockBarsCache.value(k));
         if (info.valid) {
             m_devCache[k] = info;
             if (m_snap.stockKey == k) {
                 m_snap.deviation = info;
-                update();
             }
-            emit deviationUpdated(k);
+            updatedKeys.append(k);
         } else {
-            stillPending.insert(k);
+            m_pendingCompute.insert(k);
         }
     }
-    m_pendingCompute = stillPending;
+    if (!updatedKeys.isEmpty()) {
+        update();
+        for (const QString &k : updatedKeys) {
+            emit deviationUpdated(k);
+        }
+    }
 }
 
 DeviationInfo HudOverlay::computeDeviation(const QString &stockKey, const QVector<DailyBarLite> &stkBars) const {

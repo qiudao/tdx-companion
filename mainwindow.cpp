@@ -325,6 +325,14 @@ void MainWindow::onCycleDevMode() {
     if (m_btnDevMode) {
         m_btnDevMode->setText(m_hud->devModeShortLabel());
     }
+    if (m_hudEnabled) {
+        m_hud->show();
+        m_hud->raise();
+    }
+    if (!m_activeStockKey.isEmpty()) {
+        m_hud->setAgentVmIp(m_bridge->vmIp());
+        m_hud->requestDeviations({m_activeStockKey});
+    }
     m_statusLbl->setText("异动HUD: " + m_hud->devModeLabel());
     rebuildPeerTable();
 }

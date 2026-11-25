@@ -142,5 +142,4 @@ private:
     QMap<QString, DeviationInfo> m_devCache;
     QSet<QString> m_inFlight;
     QSet<QString> m_pendingCompute;
-    bool m_indicesRequested = false;
 };
