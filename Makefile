@@ -2,7 +2,7 @@ QT_VERSION := $(shell if [ -d "$(HOME)/Qt/6.10.2/macos" ]; then echo "6.10.2"; e
 QT_PATH := $(HOME)/Qt/$(QT_VERSION)/macos
 CMAKE := $(HOME)/Qt/Tools/CMake/CMake.app/Contents/bin/cmake
 
-.PHONY: all configure build run clean
+.PHONY: all configure build run clean cli cli-install
 
 all: build
 
@@ -16,5 +16,12 @@ build: configure
 run: build
 	open build/tdx_companion.app
 
+cli:
+	cd tools/tdx-cli && go build -ldflags="-s -w" -o tdx-cli .
+
+cli-install: cli
+	mkdir -p "$(HOME)/.local/bin"
+	install -m 755 tools/tdx-cli/tdx-cli "$(HOME)/.local/bin/tdx-cli"
+
 clean:
-	rm -rf build
+	rm -rf build tools/tdx-cli/tdx-cli

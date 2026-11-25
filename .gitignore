@@ -1,5 +1,6 @@
 build/
 win-agent/*.exe
+tools/tdx-cli/tdx-cli
 .DS_Store
 *.user
 *.swp
