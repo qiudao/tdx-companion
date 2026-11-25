@@ -568,75 +568,61 @@ void HudOverlay::paintDevBottomCapsule(QPainter &p, int W, int topY, int bgAlpha
     p.drawText(QRectF(capX + badgeW + 12, capY, capW - badgeW - 18, capH), Qt::AlignLeft | Qt::AlignVCenter, line);
 }
 
-// ================= 2B: K线图左上角文字下方战术卡片 + 3日松绑推演 =================
+// ================= 2B: K线图左上角极简双进度条卡片 =================
 void HudOverlay::paintDevTopRightCard(QPainter &p, int W, int bgAlpha, const DeviationInfo &d) const {
     Q_UNUSED(W);
-    const int cardW = 372;
-    const int cardH = 92;
+    const int cardW = 308;
+    const int cardH = 60;
     const int x0 = 12;
-    const int y0 = 96; // 避开顶部工具栏与左上角指标文字行
+    const int y0 = 68; // 紧贴左上角指标文字下方
     const QColor lv = devLevelColor(d);
 
-    // Background + top accent strip
-    p.fillRect(QRectF(x0, y0, cardW, cardH), QColor(10, 8, 8, qMin(232, bgAlpha)));
-    p.fillRect(QRectF(x0, y0, cardW, 24), QColor(28, 6, 6, qMin(240, bgAlpha)));
-    p.setPen(QPen(QColor(lv.red(), lv.green(), lv.blue(), 200), 1.0));
+    p.fillRect(QRectF(x0, y0, cardW, cardH), QColor(8, 8, 8, qMin(220, bgAlpha)));
+    p.setPen(QPen(QColor(lv.red(), lv.green(), lv.blue(), 175), 1.0));
     p.drawRect(QRectF(x0, y0, cardW, cardH));
 
-    // Header row
-    QFont fHdr("PingFang SC", 11, QFont::Bold);
-    p.setFont(fHdr);
-    p.setPen(QColor(255, 255, 0));
-    p.drawText(QRectF(x0 + 8, y0 + 2, 180, 20), Qt::AlignLeft | Qt::AlignVCenter,
-               QString("%1 异动战术卡").arg(m_snap.stockName.isEmpty() ? m_snap.stockKey.mid(1) : m_snap.stockName));
-
-    const QString badge = QString("%1  偏10 %2%3%")
-        .arg(devBadgeText(d))
-        .arg(d.dev10 > 0 ? "+" : "").arg(d.dev10, 0, 'f', 1);
-    p.setPen(lv);
-    p.drawText(QRectF(x0 + 180, y0 + 2, cardW - 188, 20), Qt::AlignRight | Qt::AlignVCenter, badge);
-
-    // Dual Progress Bars (10d & 30d)
+    // Compact dual progress bars (10d & 30d)
     auto drawBar = [&](int by, const QString &lbl, double val, double maxV, const QColor &col, const QString &rightTxt) {
-        QFont fSmall("PingFang SC", 10);
-        p.setFont(fSmall);
-        p.setPen(QColor(210, 210, 210));
-        p.drawText(QRectF(x0 + 8, by, 34, 14), Qt::AlignLeft | Qt::AlignVCenter, lbl);
+        QFont fLbl("PingFang SC", 10, QFont::Bold);
+        p.setFont(fLbl);
+        p.setPen(QColor(200, 200, 200));
+        p.drawText(QRectF(x0 + 7, by, 30, 14), Qt::AlignLeft | Qt::AlignVCenter, lbl);
 
-        const int bx = x0 + 44;
-        const int bw = 158;
-        p.fillRect(QRectF(bx, by + 2, bw, 10), QColor(28, 28, 28));
-        p.setPen(QPen(QColor(70, 20, 20), 1.0));
+        const int bx = x0 + 38;
+        const int bw = 122;
+        p.fillRect(QRectF(bx, by + 2, bw, 10), QColor(26, 26, 26));
+        p.setPen(QPen(QColor(65, 20, 20), 1.0));
         p.drawRect(QRectF(bx, by + 2, bw, 10));
         const double frac = qBound(0.0, val / maxV, 1.0);
         p.fillRect(QRectF(bx + 1, by + 3, (bw - 2) * frac, 8), col);
 
         p.setPen(col);
-        p.drawText(QRectF(bx + bw + 8, by, cardW - (bx - x0) - bw - 16, 14), Qt::AlignRight | Qt::AlignVCenter, rightTxt);
+        p.drawText(QRectF(bx + bw + 6, by, cardW - (bx - x0) - bw - 13, 14), Qt::AlignRight | Qt::AlignVCenter, rightTxt);
     };
 
-    const QString r10 = QString("%1%2% (N%3 / 价%4)")
-        .arg(d.dev10 > 0 ? "+" : "").arg(d.dev10, 0, 'f', 1).arg(d.n10).arg(d.price100, 0, 'f', 2);
-    drawBar(y0 + 30, "10日", d.dev10, 100.0, lv, r10);
+    const QString r10 = QString("%1%2% 价%3%4")
+        .arg(d.dev10 > 0 ? "+" : "").arg(d.dev10, 0, 'f', 1)
+        .arg(d.price100, 0, 'f', 2)
+        .arg(d.triggered10 ? " 异!" : "");
+    drawBar(y0 + 5, "10日", d.dev10, 100.0, lv, r10);
 
     const QColor col30 = d.triggered30 ? QColor(255, 45, 45)
-                        : (d.dev30 >= 140.0 ? QColor(255, 160, 0) : QColor(150, 150, 170));
-    const QString r30 = QString("%1%2% (价200: %3)")
-        .arg(d.dev30 > 0 ? "+" : "").arg(d.dev30, 0, 'f', 1).arg(d.price200, 0, 'f', 2);
-    drawBar(y0 + 49, "30日", d.dev30, 200.0, col30, r30);
+                        : (d.dev30 >= 140.0 ? QColor(255, 160, 0) : QColor(145, 145, 165));
+    const QString r30 = QString("%1%2% 价%3")
+        .arg(d.dev30 > 0 ? "+" : "").arg(d.dev30, 0, 'f', 1)
+        .arg(d.price200, 0, 'f', 2);
+    drawBar(y0 + 23, "30日", d.dev30, 200.0, col30, r30);
 
-    // 3-Day Rolling Forecast Row (今100 → 明100 → 后100)
-    const QString relaxTag = (d.day2_100 > d.tomorrow100 + 0.05) ? "↑松绑" : "持平";
-    const QString forecast = QString("3日红线:  今 %1 → 明 %2%3 → 后 %4 (%5)")
+    // Ultra-compact 3-day rolling line
+    const QString forecast = QString("今%1 → 明%2%3 → 后%4")
         .arg(d.price100, 0, 'f', 2)
         .arg(d.tomorrow100, 0, 'f', 2)
         .arg(d.tomorrowZtTriggers ? "(板触!)" : "")
-        .arg(d.day2_100, 0, 'f', 2)
-        .arg(relaxTag);
+        .arg(d.day2_100, 0, 'f', 2);
     QFont fCast("PingFang SC", 10, QFont::Bold);
     p.setFont(fCast);
-    p.setPen(d.tomorrowZtTriggers ? QColor(255, 120, 60) : QColor(0, 235, 255));
-    p.drawText(QRectF(x0 + 8, y0 + 69, cardW - 16, 18), Qt::AlignLeft | Qt::AlignVCenter, forecast);
+    p.setPen(d.tomorrowZtTriggers ? QColor(255, 120, 60) : QColor(0, 225, 245));
+    p.drawText(QRectF(x0 + 7, y0 + 41, cardW - 14, 15), Qt::AlignLeft | Qt::AlignVCenter, forecast);
 }
 
 // ================= 2D: K线图左上角文字下方控盘三价标尺 =================
@@ -645,8 +631,8 @@ void HudOverlay::paintDevRightRuler(QPainter &p, int W, int topY, int bgAlpha, c
     const int boxW = 196;
     const int boxH = 152;
     const int x0 = 12;
-    // 单独显示2D时放在左上文字下方(y=96)；全开模式时自动排在2B卡片下方(y=198)不重叠
-    const int y0 = (m_devMode == DevHudMode::AllInOne) ? 198 : qMin(96, qMax(64, topY - boxH - 36));
+    // 单独显示2D时放在左上文字下方(y=68)；全开模式时自动排在2B卡片下方(y=136)不重叠
+    const int y0 = (m_devMode == DevHudMode::AllInOne) ? 136 : qMin(68, qMax(50, topY - boxH - 36));
     const QColor lv = devLevelColor(d);
 
     p.fillRect(QRectF(x0, y0, boxW, boxH), QColor(10, 8, 8, qMin(228, bgAlpha)));

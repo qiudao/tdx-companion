@@ -135,7 +135,7 @@ private:
     QVector<BreadthDayInfo> m_breadth; // last 20 trading days
     double m_opacity = 1.0;
     int m_opacityIdx = 2; // 0=半透(0.75), 1=微透(0.90), 2=原生不透明(1.0)
-    DevHudMode m_devMode = DevHudMode::BottomCapsule;
+    DevHudMode m_devMode = DevHudMode::TopRightCard;
 
     QMap<QString, QVector<DailyBarLite>> m_indexBars;
     QMap<QString, QVector<DailyBarLite>> m_stockBarsCache;

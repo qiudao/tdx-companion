@@ -144,8 +144,8 @@ void MainWindow::setupUi() {
     m_btnHud->setToolTip("全屏透明穿透抬头显示 (⌘U 开关 · ⌘⇧U 调透明度)");
     connect(m_btnHud, &QPushButton::toggled, this, &MainWindow::onToggleHud);
 
-    m_btnDevMode = new QPushButton("2A");
-    m_btnDevMode->setToolTip("切换异动HUD样式 (⌘D): 2A贴边胶囊 / 2B战术卡 / 2D控盘尺 / 全开 / 关闭");
+    m_btnDevMode = new QPushButton("2B");
+    m_btnDevMode->setToolTip("切换异动HUD样式 (⌘D): 2A贴边胶囊 / 2B极简战术卡 / 2D控盘尺 / 全开 / 关闭");
     connect(m_btnDevMode, &QPushButton::clicked, this, &MainWindow::onCycleDevMode);
 
     auto *btnSync = new QPushButton("刷");
