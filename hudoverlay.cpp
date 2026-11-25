@@ -100,13 +100,13 @@ void HudOverlay::cycleDevMode() {
 
 QString HudOverlay::devModeLabel() const {
     switch (m_devMode) {
-    case DevHudMode::BottomCapsule: return "2A 贴边胶囊";
-    case DevHudMode::TopRightCard:  return "2B 右上战术卡";
-    case DevHudMode::RightRuler:    return "2D 右侧控盘尺";
-    case DevHudMode::AllInOne:      return "全开组合";
+    case DevHudMode::BottomCapsule: return "2A 左侧贴边胶囊";
+    case DevHudMode::TopRightCard:  return "2B 左上战术卡";
+    case DevHudMode::RightRuler:    return "2D 左侧控盘尺";
+    case DevHudMode::AllInOne:      return "左侧全开组合";
     case DevHudMode::Off:           return "关闭";
     }
-    return "2A 贴边胶囊";
+    return "2A 左侧贴边胶囊";
 }
 
 QString HudOverlay::devModeShortLabel() const {
@@ -518,12 +518,12 @@ void HudOverlay::reloadMarketBreadth() {
     update();
 }
 
-// ================= 2A: 底栏贴边进度条胶囊 =================
+// ================= 2A: 左侧底栏贴边进度条胶囊 =================
 void HudOverlay::paintDevBottomCapsule(QPainter &p, int W, int topY, int bgAlpha, const DeviationInfo &d) const {
     const int capH = 26;
     const int capY = topY - capH - 1;
-    const int capX = static_cast<int>(W * 0.44);
-    const int capW = W - capX - 1;
+    const int capX = 10;
+    const int capW = qMin(W - 20, 760);
     const QColor lv = devLevelColor(d);
 
     // Base dark canvas
@@ -568,12 +568,13 @@ void HudOverlay::paintDevBottomCapsule(QPainter &p, int W, int topY, int bgAlpha
     p.drawText(QRectF(capX + badgeW + 12, capY, capW - badgeW - 18, capH), Qt::AlignLeft | Qt::AlignVCenter, line);
 }
 
-// ================= 2B: 主图右上角战术卡片 + 3日松绑推演 =================
+// ================= 2B: 主图左上角战术卡片 + 3日松绑推演 =================
 void HudOverlay::paintDevTopRightCard(QPainter &p, int W, int bgAlpha, const DeviationInfo &d) const {
+    Q_UNUSED(W);
     const int cardW = 372;
     const int cardH = 92;
-    const int x0 = W - cardW - 12;
-    const int y0 = 36;
+    const int x0 = 12;
+    const int y0 = 64;
     const QColor lv = devLevelColor(d);
 
     // Background + top accent strip
@@ -638,12 +639,13 @@ void HudOverlay::paintDevTopRightCard(QPainter &p, int W, int bgAlpha, const Dev
     p.drawText(QRectF(x0 + 8, y0 + 69, cardW - 16, 18), Qt::AlignLeft | Qt::AlignVCenter, forecast);
 }
 
-// ================= 2D: 主图右侧控盘三价标尺 =================
+// ================= 2D: 主图左侧控盘三价标尺 =================
 void HudOverlay::paintDevRightRuler(QPainter &p, int W, int topY, int bgAlpha, const DeviationInfo &d) const {
+    Q_UNUSED(W);
     const int boxW = 196;
     const int boxH = 152;
-    const int x0 = W - boxW - 12;
-    const int y0 = qMax(140, (topY - boxH) / 2);
+    const int x0 = 12;
+    const int y0 = qMax(168, (topY - boxH) / 2);
     const QColor lv = devLevelColor(d);
 
     p.fillRect(QRectF(x0, y0, boxW, boxH), QColor(10, 8, 8, qMin(228, bgAlpha)));
@@ -942,25 +944,39 @@ void HudOverlay::paintEvent(QPaintEvent *) {
     }
 
     // ================= FLOATING SEVERE DEVIATION OVERLAYS (2A / 2B / 2D / ALL) =================
-    if (m_devMode != DevHudMode::Off && m_snap.deviation.valid) {
-        const auto &d = m_snap.deviation;
-        switch (m_devMode) {
-        case DevHudMode::BottomCapsule:
-            paintDevBottomCapsule(p, W, topY, bgAlpha, d);
-            break;
-        case DevHudMode::TopRightCard:
-            paintDevTopRightCard(p, W, bgAlpha, d);
-            break;
-        case DevHudMode::RightRuler:
-            paintDevRightRuler(p, W, topY, bgAlpha, d);
-            break;
-        case DevHudMode::AllInOne:
-            paintDevBottomCapsule(p, W, topY, bgAlpha, d);
-            paintDevTopRightCard(p, W, bgAlpha, d);
-            paintDevRightRuler(p, W, topY, bgAlpha, d);
-            break;
-        case DevHudMode::Off:
-            break;
+    if (m_devMode != DevHudMode::Off) {
+        if (m_snap.deviation.valid) {
+            const auto &d = m_snap.deviation;
+            switch (m_devMode) {
+            case DevHudMode::BottomCapsule:
+                paintDevBottomCapsule(p, W, topY, bgAlpha, d);
+                break;
+            case DevHudMode::TopRightCard:
+                paintDevTopRightCard(p, W, bgAlpha, d);
+                break;
+            case DevHudMode::RightRuler:
+                paintDevRightRuler(p, W, topY, bgAlpha, d);
+                break;
+            case DevHudMode::AllInOne:
+                paintDevBottomCapsule(p, W, topY, bgAlpha, d);
+                paintDevTopRightCard(p, W, bgAlpha, d);
+                paintDevRightRuler(p, W, topY, bgAlpha, d);
+                break;
+            case DevHudMode::Off:
+                break;
+            }
+        } else {
+            // Show subtle left-side status pill so user always sees the active mode
+            const int px = 12, py = topY - 25, pw = 240, ph = 22;
+            p.fillRect(QRectF(px, py, pw, ph), QColor(12, 12, 12, qMin(220, bgAlpha)));
+            p.setPen(QPen(QColor(130, 60, 0, 180), 1.0));
+            p.drawRect(QRectF(px, py, pw, ph));
+            p.setFont(fTiny);
+            p.setPen(QColor(220, 180, 80));
+            const QString msg = m_snap.stockKey.isEmpty()
+                ? QString("[%1] 等待通达信选股...").arg(devModeLabel())
+                : QString("[%1] 拉取 %2 异动数据...").arg(devModeShortLabel(), m_snap.stockName);
+            p.drawText(QRectF(px + 8, py, pw - 16, ph), Qt::AlignLeft | Qt::AlignVCenter, msg);
         }
     }
 }
