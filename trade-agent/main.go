@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	agentVersion = "0.6.0"
+	agentVersion = "0.7.0"
 	defaultAddr  = "0.0.0.0:19877"
 	xiadanExe    = "xiadan.exe"
 )
@@ -827,7 +827,9 @@ func main() {
 		addr = defaultAddr
 	}
 	startKeepaliveLoop()
+	startHongjingRegisterLoop("trade", agentVersion, 19877)
 	mux := http.NewServeMux()
+	mux.HandleFunc("/message", handleHongjingMessage)
 	mux.HandleFunc("/health", withAuth(handleHealth))
 	mux.HandleFunc("/keepalive", withAuth(handleKeepalive))
 	mux.HandleFunc("/probe", withAuth(handleProbe))

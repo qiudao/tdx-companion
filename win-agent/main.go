@@ -15,7 +15,7 @@ import (
 	"unsafe"
 )
 
-const agentVersion = "2.0.1"
+const agentVersion = "2.1.0"
 
 var startTime = time.Now()
 
@@ -208,7 +208,10 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
+	startHongjingRegisterLoop("tdx", agentVersion, 19876)
 	mux := http.NewServeMux()
+	// Hongjing plugin endpoint
+	mux.HandleFunc("/message", handleHongjingMessage)
 	// Control & file primitives
 	mux.HandleFunc("/health", handleHealth)
 	mux.HandleFunc("/status", handleStatus)
