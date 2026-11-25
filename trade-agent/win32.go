@@ -31,6 +31,7 @@ var (
 	procPostMessageW        = user32.NewProc("PostMessageW")
 	procSetForegroundWindow = user32.NewProc("SetForegroundWindow")
 	procShowWindow          = user32.NewProc("ShowWindow")
+	procIsIconic            = user32.NewProc("IsIconic")
 	procKeybdEvent          = user32.NewProc("keybd_event")
 	procSetFocus            = user32.NewProc("SetFocus")
 	procGetWindowDC         = user32.NewProc("GetWindowDC")
@@ -63,6 +64,7 @@ const (
 	wmLButtonDown   = 0x0201
 	wmLButtonUp     = 0x0202
 	bmClick         = 0x00F5
+	swMaximize      = 3
 	swRestore       = 9
 	keyeventfKeyUp  = 0x0002
 	cfUnicodeText   = 13
@@ -301,7 +303,17 @@ func focusWindow(hwnd uintptr) {
 	if hwnd == 0 {
 		return
 	}
-	procShowWindow.Call(hwnd, swRestore)
+	if min, _, _ := procIsIconic.Call(hwnd); min != 0 {
+		procShowWindow.Call(hwnd, swRestore)
+	}
+	procSetForegroundWindow.Call(hwnd)
+}
+
+func maximizeWindow(hwnd uintptr) {
+	if hwnd == 0 {
+		return
+	}
+	procShowWindow.Call(hwnd, swMaximize)
 	procSetForegroundWindow.Call(hwnd)
 }
 
@@ -354,6 +366,22 @@ func findVisibleCtrlByIDAndClass(parentHwnd uintptr, ctrlID int32, className str
 		}
 	}
 	return WinNode{}, false
+}
+
+// findLeftmostCtrlByIDAndClass disambiguates duplicate IDs (e.g. 1018/1036 appear in both left order form and right 5-level quote panel).
+func findLeftmostCtrlByIDAndClass(parentHwnd uintptr, ctrlID int32, className string) (WinNode, bool) {
+	children := enumChildNodes(parentHwnd, false)
+	var best WinNode
+	found := false
+	for _, ch := range children {
+		if ch.CtrlID == ctrlID && (className == "" || strings.EqualFold(ch.Class, className)) {
+			if !found || ch.Rect.Left < best.Rect.Left {
+				best = ch
+				found = true
+			}
+		}
+	}
+	return best, found
 }
 
 func clickButton(hwnd uintptr) {

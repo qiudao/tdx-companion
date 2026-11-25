@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	agentVersion = "0.4.0"
+	agentVersion = "0.5.0"
 	defaultAddr  = "0.0.0.0:19877"
 	xiadanExe    = "xiadan.exe"
 )
@@ -634,7 +634,7 @@ func handleStockCapacity(w http.ResponseWriter, r *http.Request) {
 	}
 
 	readField := func(id int32, cls string) string {
-		if n, ok := findVisibleCtrlByIDAndClass(mainWin.Hwnd, id, cls); ok {
+		if n, ok := findLeftmostCtrlByIDAndClass(mainWin.Hwnd, id, cls); ok {
 			return n.Text
 		}
 		return ""
@@ -672,19 +672,24 @@ func handleDialogDismiss(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "dialog": snap, "action": act})
 }
 
-// GET /screenshot?target=grid|main&tab=F3|F4 — Read-only PNG capture for Mac-side Vision OCR (zero clipboard/captcha).
+// GET /screenshot?target=grid|main&tab=F3|F4&maximize=1 — Read-only PNG capture for Mac-side Vision OCR (zero clipboard/captcha).
 func handleScreenshot(w http.ResponseWriter, r *http.Request) {
 	target := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("target")))
 	if target == "" {
 		target = "grid"
 	}
 	tab := strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("tab")))
+	wantMax := r.URL.Query().Get("maximize") != "0"
 
 	pid := findProcessPID(xiadanExe)
 	mainWin, ok := findMainXiadanWindow(pid)
 	if !ok {
 		writeJSON(w, http.StatusNotFound, map[string]any{"ok": false, "err": "xiadan window not found"})
 		return
+	}
+	if wantMax {
+		maximizeWindow(mainWin.Hwnd)
+		time.Sleep(180 * time.Millisecond)
 	}
 	if tab != "" {
 		if err := sendNavKey(mainWin.Hwnd, tab); err != nil {
