@@ -2,6 +2,7 @@ build/
 win-agent/*.exe
 trade-agent/*.exe
 tools/tdx-cli/tdx-cli
+tools/vision-ocr/vision-ocr
 .DS_Store
 *.user
 *.swp

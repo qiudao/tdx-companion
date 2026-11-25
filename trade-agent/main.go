@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	agentVersion = "0.2.0"
+	agentVersion = "0.3.0"
 	defaultAddr  = "0.0.0.0:19877"
 	xiadanExe    = "xiadan.exe"
 )
@@ -544,6 +544,50 @@ func handleDialogDismiss(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "dialog": snap, "action": act})
 }
 
+// GET /screenshot?target=grid|main&tab=F3|F4 — Read-only PNG capture for Mac-side Vision OCR (zero clipboard/captcha).
+func handleScreenshot(w http.ResponseWriter, r *http.Request) {
+	target := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("target")))
+	if target == "" {
+		target = "grid"
+	}
+	tab := strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("tab")))
+
+	pid := findProcessPID(xiadanExe)
+	mainWin, ok := findMainXiadanWindow(pid)
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]any{"ok": false, "err": "xiadan window not found"})
+		return
+	}
+	if tab != "" {
+		if err := sendNavKey(mainWin.Hwnd, tab); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "err": err.Error()})
+			return
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+
+	var hwnd uintptr = mainWin.Hwnd
+	if target == "grid" {
+		if grid, okG := findVisibleCtrlByIDAndClass(mainWin.Hwnd, 1047, "CVirtualGridCtrl"); okG {
+			hwnd = grid.Hwnd
+		} else {
+			writeJSON(w, http.StatusNotFound, map[string]any{"ok": false, "err": "CVirtualGridCtrl (1047) not found"})
+			return
+		}
+	}
+
+	pngBytes, pw, ph, err := captureWindowPNG(hwnd)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "err": err.Error()})
+		return
+	}
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("X-Image-Width", strconv.Itoa(pw))
+	w.Header().Set("X-Image-Height", strconv.Itoa(ph))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(pngBytes)
+}
+
 func main() {
 	addr := strings.TrimSpace(os.Getenv("TRADE_AGENT_ADDR"))
 	if addr == "" {
@@ -556,6 +600,7 @@ func main() {
 	mux.HandleFunc("/dialog/dismiss", withAuth(handleDialogDismiss))
 	mux.HandleFunc("/read/texts", withAuth(handleReadTexts))
 	mux.HandleFunc("/grid", withAuth(handleGrid))
+	mux.HandleFunc("/screenshot", withAuth(handleScreenshot))
 	mux.HandleFunc("/focus", withAuth(handleFocus))
 	mux.HandleFunc("/nav", withAuth(handleNav))
 	mux.HandleFunc("/prefill", withAuth(handlePrefill))

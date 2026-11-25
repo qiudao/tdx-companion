@@ -3,7 +3,10 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
+	"image"
+	"image/png"
 	"strings"
 	"syscall"
 	"time"
@@ -12,6 +15,7 @@ import (
 
 var (
 	user32                  = syscall.NewLazyDLL("user32.dll")
+	gdi32                   = syscall.NewLazyDLL("gdi32.dll")
 	kernel32                = syscall.NewLazyDLL("kernel32.dll")
 	procFindWindowExW       = user32.NewProc("FindWindowExW")
 	procGetWindowThreadPID  = user32.NewProc("GetWindowThreadProcessId")
@@ -29,6 +33,16 @@ var (
 	procShowWindow          = user32.NewProc("ShowWindow")
 	procKeybdEvent          = user32.NewProc("keybd_event")
 	procSetFocus            = user32.NewProc("SetFocus")
+	procGetWindowDC         = user32.NewProc("GetWindowDC")
+	procReleaseDC           = user32.NewProc("ReleaseDC")
+	procPrintWindow         = user32.NewProc("PrintWindow")
+	procCreateCompatibleDC  = gdi32.NewProc("CreateCompatibleDC")
+	procCreateCompatibleBmp = gdi32.NewProc("CreateCompatibleBitmap")
+	procSelectObject        = gdi32.NewProc("SelectObject")
+	procBitBlt              = gdi32.NewProc("BitBlt")
+	procGetDIBits           = gdi32.NewProc("GetDIBits")
+	procDeleteObject        = gdi32.NewProc("DeleteObject")
+	procDeleteDC            = gdi32.NewProc("DeleteDC")
 	procOpenClipboard       = user32.NewProc("OpenClipboard")
 	procCloseClipboard      = user32.NewProc("CloseClipboard")
 	procEmptyClipboard      = user32.NewProc("EmptyClipboard")
@@ -502,4 +516,89 @@ func dismissDialog(dlg WinNode, accept bool) (DialogSnapshot, string) {
 		return snap, fmt.Sprintf("clicked %s (id=%d)", target.Text, target.CtrlID)
 	}
 	return snap, "no matching button"
+}
+
+type bitmapInfoHeader struct {
+	BiSize          uint32
+	BiWidth         int32
+	BiHeight        int32
+	BiPlanes        uint16
+	BiBitCount      uint16
+	BiCompression   uint32
+	BiSizeImage     uint32
+	BiXPelsPerMeter int32
+	BiYPelsPerMeter int32
+	BiClrUsed       uint32
+	BiClrImportant  uint32
+}
+
+// captureWindowPNG captures a Win32 window (or child control like CVirtualGridCtrl) as lossless PNG.
+// Pure read-only pixel capture — never touches clipboard or triggers anti-copy dialogs.
+func captureWindowPNG(hwnd uintptr) ([]byte, int, int, error) {
+	if hwnd == 0 {
+		return nil, 0, 0, fmt.Errorf("invalid hwnd")
+	}
+	r := getRect(hwnd)
+	w := int(r.Right - r.Left)
+	h := int(r.Bottom - r.Top)
+	if w <= 0 || h <= 0 || w > 8000 || h > 8000 {
+		return nil, 0, 0, fmt.Errorf("invalid window size %dx%d (minimized?)", w, h)
+	}
+
+	srcDC, _, _ := procGetWindowDC.Call(hwnd)
+	if srcDC == 0 {
+		return nil, 0, 0, fmt.Errorf("GetWindowDC failed")
+	}
+	defer procReleaseDC.Call(hwnd, srcDC)
+
+	memDC, _, _ := procCreateCompatibleDC.Call(srcDC)
+	if memDC == 0 {
+		return nil, 0, 0, fmt.Errorf("CreateCompatibleDC failed")
+	}
+	defer procDeleteDC.Call(memDC)
+
+	bmp, _, _ := procCreateCompatibleBmp.Call(srcDC, uintptr(w), uintptr(h))
+	if bmp == 0 {
+		return nil, 0, 0, fmt.Errorf("CreateCompatibleBitmap failed")
+	}
+	defer procDeleteObject.Call(bmp)
+
+	oldObj, _, _ := procSelectObject.Call(memDC, bmp)
+	defer procSelectObject.Call(memDC, oldObj)
+
+	// Try PrintWindow with PW_RENDERFULLCONTENT (2), fallback to BitBlt
+	okPW, _, _ := procPrintWindow.Call(hwnd, memDC, 2)
+	if okPW == 0 {
+		const srccopy = 0x00CC0020
+		procBitBlt.Call(memDC, 0, 0, uintptr(w), uintptr(h), srcDC, 0, 0, srccopy)
+	}
+
+	var bi bitmapInfoHeader
+	bi.BiSize = uint32(unsafe.Sizeof(bi))
+	bi.BiWidth = int32(w)
+	bi.BiHeight = -int32(h) // top-down DIB
+	bi.BiPlanes = 1
+	bi.BiBitCount = 32
+	bi.BiCompression = 0 // BI_RGB
+
+	buf := make([]byte, w*h*4)
+	ret, _, _ := procGetDIBits.Call(memDC, bmp, 0, uintptr(h), uintptr(unsafe.Pointer(&buf[0])), uintptr(unsafe.Pointer(&bi)), 0)
+	if ret == 0 {
+		return nil, 0, 0, fmt.Errorf("GetDIBits failed")
+	}
+
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	for i := 0; i < len(buf); i += 4 {
+		// BGRA -> RGBA
+		img.Pix[i+0] = buf[i+2]
+		img.Pix[i+1] = buf[i+1]
+		img.Pix[i+2] = buf[i+0]
+		img.Pix[i+3] = 255
+	}
+
+	var out bytes.Buffer
+	if err := png.Encode(&out, img); err != nil {
+		return nil, 0, 0, err
+	}
+	return out.Bytes(), w, h, nil
 }

@@ -26,5 +26,10 @@ cli-install: cli
 trade-agent:
 	cd trade-agent && GOOS=windows GOARCH=arm64 go build -ldflags="-H=windowsgui -s -w" -o trade-agent.exe .
 
+vision-ocr:
+	swiftc -O tools/vision-ocr/main.swift -o tools/vision-ocr/vision-ocr -framework Vision -framework AppKit
+	mkdir -p "$(HOME)/.local/bin"
+	install -m 755 tools/vision-ocr/vision-ocr "$(HOME)/.local/bin/vision-ocr"
+
 clean:
 	rm -rf build tools/tdx-cli/tdx-cli
