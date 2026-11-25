@@ -2,7 +2,7 @@ QT_VERSION := $(shell if [ -d "$(HOME)/Qt/6.10.2/macos" ]; then echo "6.10.2"; e
 QT_PATH := $(HOME)/Qt/$(QT_VERSION)/macos
 CMAKE := $(HOME)/Qt/Tools/CMake/CMake.app/Contents/bin/cmake
 
-.PHONY: all configure build run clean cli cli-install
+.PHONY: all configure build run clean cli cli-install trade-agent
 
 all: build
 
@@ -22,6 +22,9 @@ cli:
 cli-install: cli
 	mkdir -p "$(HOME)/.local/bin"
 	install -m 755 tools/tdx-cli/tdx-cli "$(HOME)/.local/bin/tdx-cli"
+
+trade-agent:
+	cd trade-agent && GOOS=windows GOARCH=arm64 go build -ldflags="-H=windowsgui -s -w" -o trade-agent.exe .
 
 clean:
 	rm -rf build tools/tdx-cli/tdx-cli
