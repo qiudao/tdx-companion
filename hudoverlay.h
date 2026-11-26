@@ -90,6 +90,7 @@ public:
     StockCycleInfo queryStockCycle(const QString &stockKey) const;
 
     void requestDeviations(const QStringList &stockKeys);
+    void updateLiveQuotes(const QMap<QString, PeerQuote> &quotes);
     DeviationInfo cachedDeviation(const QString &stockKey) const;
 
     void cycleOpacity();
@@ -106,9 +107,12 @@ protected:
 
 private:
     QString dbPath() const;
+    static QString toTencentSymbol(const QString &key);
     void fetchIndexBarsIfNeeded();
+    void fetchLiveIndexQuotes();
     void fetchStockBarsForDeviation(const QString &stockKey);
     void recomputePendingStocks();
+    void recomputeCachedStocks(const QStringList &keys);
     DeviationInfo computeDeviation(const QString &stockKey, const QVector<DailyBarLite> &stkBars) const;
 
     void paintDevCard(QPainter &p, int bgAlpha, const DeviationInfo &d) const;
@@ -122,8 +126,12 @@ private:
     int m_opacityIdx = 2; // 0=半透(0.75), 1=微透(0.90), 2=原生不透明(1.0)
 
     QMap<QString, QVector<DailyBarLite>> m_indexBars;
+    QMap<QString, DailyBarLite> m_liveIndexQuotes;
+    QMap<QString, DailyBarLite> m_liveStockQuotes;
     QMap<QString, QVector<DailyBarLite>> m_stockBarsCache;
     QMap<QString, DeviationInfo> m_devCache;
     QSet<QString> m_inFlight;
     QSet<QString> m_pendingCompute;
+    bool m_liveIndexInFlight = false;
+    qint64 m_lastLiveIndexMs = 0;
 };

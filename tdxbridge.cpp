@@ -412,6 +412,7 @@ void TdxBridge::fetchQuotes(const QStringList &keys, int requestToken) {
                     q.price = p[3].toDouble();
                     q.pct = p[32].toDouble();
                     q.amount = p[37].toDouble();
+                    q.tradeDate = p[30].trimmed().left(8).toInt();
                     out[q.key] = q;
                 }
             }

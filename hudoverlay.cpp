@@ -50,17 +50,28 @@ HudOverlay::HudOverlay(QWidget *parent)
     setGeometry(avail.left(), avail.top(), avail.width() - 222, avail.height());
 
     reloadMarketBreadth();
+    fetchIndexBarsIfNeeded();
+    fetchLiveIndexQuotes();
+}
+
+QString HudOverlay::toTencentSymbol(const QString &key) {
+    if (key.size() != 7) return {};
+    if (key == "1999998") return "sh000002"; // 上证A指
+    if (key == "1999999") return "sh000001"; // 上证指数
+    const QChar m = key[0];
+    const QString c = key.mid(1);
+    if (m == '1') return "sh" + c;
+    if (m == '0') return "sz" + c;
+    if (m == '2') return "bj" + c;
+    return "sh" + c;
 }
 
 void HudOverlay::setAgentVmIp(const QString &vmIp) {
-    if (vmIp.isEmpty()) return;
-    const QString url = QString("http://%1:19876").arg(vmIp);
-    if (m_agentBaseUrl == url) {
-        fetchIndexBarsIfNeeded();
-        return;
+    if (!vmIp.isEmpty()) {
+        m_agentBaseUrl = QString("http://%1:19876").arg(vmIp);
     }
-    m_agentBaseUrl = url;
     fetchIndexBarsIfNeeded();
+    fetchLiveIndexQuotes();
     if (!m_snap.stockKey.isEmpty()) {
         fetchStockBarsForDeviation(m_snap.stockKey);
     }
@@ -113,12 +124,31 @@ void HudOverlay::updateSnapshot(const HudSnapshot &snap) {
 }
 
 void HudOverlay::requestDeviations(const QStringList &stockKeys) {
-    if (m_agentBaseUrl.isEmpty()) return;
     fetchIndexBarsIfNeeded();
+    fetchLiveIndexQuotes();
     for (const QString &k : stockKeys) {
-        if (k.size() == 7 && !m_devCache.contains(k)) {
+        if (k.size() == 7 && !m_stockBarsCache.contains(k)) {
             fetchStockBarsForDeviation(k);
         }
+    }
+}
+
+void HudOverlay::updateLiveQuotes(const QMap<QString, PeerQuote> &quotes) {
+    QStringList changedKeys;
+    for (auto it = quotes.begin(); it != quotes.end(); ++it) {
+        const PeerQuote &q = it.value();
+        if (q.price > 0 && q.tradeDate > 0) {
+            m_liveStockQuotes[it.key()] = {q.tradeDate, q.price};
+            if (m_stockBarsCache.contains(it.key())) {
+                changedKeys.append(it.key());
+            } else {
+                fetchStockBarsForDeviation(it.key());
+            }
+        }
+    }
+    fetchLiveIndexQuotes();
+    if (!changedKeys.isEmpty()) {
+        recomputeCachedStocks(changedKeys);
     }
 }
 
@@ -126,43 +156,102 @@ DeviationInfo HudOverlay::cachedDeviation(const QString &stockKey) const {
     return m_devCache.value(stockKey);
 }
 
-void HudOverlay::fetchIndexBarsIfNeeded() {
-    if (m_agentBaseUrl.isEmpty()) return;
+void HudOverlay::fetchLiveIndexQuotes() {
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    if (m_liveIndexInFlight || (nowMs - m_lastLiveIndexMs < 2000 && !m_liveIndexQuotes.isEmpty())) {
+        return;
+    }
+    m_liveIndexInFlight = true;
+    m_lastLiveIndexMs = nowMs;
 
+    const QStringList idxKeys = {"1999998", "1000001", "1000688", "0399107", "0399102"};
+    QStringList syms;
+    for (const QString &ik : idxKeys) syms.append(toTencentSymbol(ik));
+
+    QUrl url("http://qt.gtimg.cn/q=" + syms.join(','));
+    QNetworkRequest req(url);
+    req.setRawHeader("User-Agent", "Mozilla/5.0");
+    QNetworkReply *reply = m_nam->get(req);
+    connect(reply, &QNetworkReply::finished, this, [this, reply, idxKeys]() {
+        m_liveIndexInFlight = false;
+        const QByteArray raw = reply->readAll();
+        const bool ok = (reply->error() == QNetworkReply::NoError);
+        reply->deleteLater();
+        if (!ok || raw.isEmpty()) return;
+
+        const QString text = QString::fromLatin1(raw).trimmed();
+        const QStringList lines = text.split('\n', Qt::SkipEmptyParts);
+        bool updated = false;
+        for (int i = 0; i < qMin(lines.size(), idxKeys.size()); ++i) {
+            const QStringList p = lines[i].split('~');
+            if (p.size() > 30) {
+                const double price = p[3].toDouble();
+                const int td = p[30].trimmed().left(8).toInt();
+                if (price > 0 && td > 0) {
+                    m_liveIndexQuotes[idxKeys[i]] = {td, price};
+                    updated = true;
+                }
+            }
+        }
+        if (updated) {
+            recomputePendingStocks();
+            if (!m_snap.stockKey.isEmpty() && m_stockBarsCache.contains(m_snap.stockKey)) {
+                recomputeCachedStocks({m_snap.stockKey});
+            }
+        }
+    });
+}
+
+void HudOverlay::fetchIndexBarsIfNeeded() {
     const QStringList idxKeys = {"1999998", "1000001", "1000688", "0399107", "0399102"};
     for (const QString &ik : idxKeys) {
         if (m_indexBars.contains(ik) || m_inFlight.contains(ik)) continue;
+        const QString sym = toTencentSymbol(ik);
+        if (sym.isEmpty()) continue;
         m_inFlight.insert(ik);
-        QUrl url(QString("%1/data/bars?key=%2&period=day&limit=45").arg(m_agentBaseUrl, ik));
-        QNetworkReply *reply = m_nam->get(QNetworkRequest(url));
-        connect(reply, &QNetworkReply::finished, this, [this, reply, ik]() {
+        QUrl url(QString("https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=%1,day,,,45,qfq").arg(sym));
+        QNetworkRequest req(url);
+        req.setRawHeader("User-Agent", "Mozilla/5.0");
+        QNetworkReply *reply = m_nam->get(req);
+        connect(reply, &QNetworkReply::finished, this, [this, reply, ik, sym]() {
             m_inFlight.remove(ik);
             const QByteArray raw = reply->readAll();
             const auto err = reply->error();
             reply->deleteLater();
             if (err != QNetworkReply::NoError || raw.isEmpty()) {
-                QTimer::singleShot(800, this, [this]() { fetchIndexBarsIfNeeded(); });
+                QTimer::singleShot(1500, this, [this]() { fetchIndexBarsIfNeeded(); });
                 return;
             }
 
-            const QJsonObject obj = QJsonDocument::fromJson(raw).object();
-            if (!obj.value("ok").toBool()) return;
+            const QJsonObject root = QJsonDocument::fromJson(raw).object();
+            const QJsonObject symObj = root.value("data").toObject().value(sym).toObject();
+            QJsonArray arr = symObj.value("qfqday").toArray();
+            if (arr.isEmpty()) arr = symObj.value("day").toArray();
             QVector<DailyBarLite> bars;
-            for (const QJsonValue &v : obj.value("bars").toArray()) {
-                const QJsonObject bo = v.toObject();
-                bars.append({bo.value("date").toString().toInt(), bo.value("close").toDouble()});
+            bars.reserve(arr.size());
+            for (const QJsonValue &v : arr) {
+                const QJsonArray row = v.toArray();
+                if (row.size() >= 3) {
+                    const int dt = row[0].toString().remove('-').toInt();
+                    const double cl = row[2].toString().toDouble();
+                    if (dt > 0 && cl > 0) bars.append({dt, cl});
+                }
             }
             if (!bars.isEmpty()) {
                 m_indexBars[ik] = bars;
                 recomputePendingStocks();
+                if (!m_snap.stockKey.isEmpty() && m_stockBarsCache.contains(m_snap.stockKey)) {
+                    recomputeCachedStocks({m_snap.stockKey});
+                }
             }
         });
     }
 }
 
 void HudOverlay::fetchStockBarsForDeviation(const QString &stockKey) {
-    if (m_agentBaseUrl.isEmpty() || stockKey.size() != 7) return;
+    if (stockKey.size() != 7) return;
     fetchIndexBarsIfNeeded();
+    fetchLiveIndexQuotes();
     if (m_stockBarsCache.contains(stockKey)) {
         DeviationInfo info = computeDeviation(stockKey, m_stockBarsCache.value(stockKey));
         if (info.valid) {
@@ -178,23 +267,34 @@ void HudOverlay::fetchStockBarsForDeviation(const QString &stockKey) {
         return;
     }
     if (m_inFlight.contains(stockKey)) return;
+    const QString sym = toTencentSymbol(stockKey);
+    if (sym.isEmpty()) return;
     m_inFlight.insert(stockKey);
 
-    QUrl url(QString("%1/data/bars?key=%2&period=day&limit=45").arg(m_agentBaseUrl, stockKey));
-    QNetworkReply *reply = m_nam->get(QNetworkRequest(url));
-    connect(reply, &QNetworkReply::finished, this, [this, reply, stockKey]() {
+    QUrl url(QString("https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=%1,day,,,45,qfq").arg(sym));
+    QNetworkRequest req(url);
+    req.setRawHeader("User-Agent", "Mozilla/5.0");
+    QNetworkReply *reply = m_nam->get(req);
+    connect(reply, &QNetworkReply::finished, this, [this, reply, stockKey, sym]() {
         m_inFlight.remove(stockKey);
         const QByteArray raw = reply->readAll();
         const bool ok = (reply->error() == QNetworkReply::NoError);
         reply->deleteLater();
         if (!ok || raw.isEmpty()) return;
 
-        const QJsonObject obj = QJsonDocument::fromJson(raw).object();
-        if (!obj.value("ok").toBool()) return;
+        const QJsonObject root = QJsonDocument::fromJson(raw).object();
+        const QJsonObject symObj = root.value("data").toObject().value(sym).toObject();
+        QJsonArray arr = symObj.value("qfqday").toArray();
+        if (arr.isEmpty()) arr = symObj.value("day").toArray();
         QVector<DailyBarLite> bars;
-        for (const QJsonValue &v : obj.value("bars").toArray()) {
-            const QJsonObject bo = v.toObject();
-            bars.append({bo.value("date").toString().toInt(), bo.value("close").toDouble()});
+        bars.reserve(arr.size());
+        for (const QJsonValue &v : arr) {
+            const QJsonArray row = v.toArray();
+            if (row.size() >= 3) {
+                const int dt = row[0].toString().remove('-').toInt();
+                const double cl = row[2].toString().toDouble();
+                if (dt > 0 && cl > 0) bars.append({dt, cl});
+            }
         }
         if (bars.isEmpty()) return;
         m_stockBarsCache[stockKey] = bars;
@@ -211,6 +311,27 @@ void HudOverlay::fetchStockBarsForDeviation(const QString &stockKey) {
             m_pendingCompute.insert(stockKey);
         }
     });
+}
+
+void HudOverlay::recomputeCachedStocks(const QStringList &keys) {
+    bool needRepaint = false;
+    QStringList updatedKeys;
+    for (const QString &k : keys) {
+        if (!m_stockBarsCache.contains(k)) continue;
+        DeviationInfo info = computeDeviation(k, m_stockBarsCache.value(k));
+        if (info.valid) {
+            m_devCache[k] = info;
+            if (m_snap.stockKey == k) {
+                m_snap.deviation = info;
+                needRepaint = true;
+            }
+            updatedKeys.append(k);
+        }
+    }
+    if (needRepaint) update();
+    for (const QString &k : updatedKeys) {
+        emit deviationUpdated(k);
+    }
 }
 
 void HudOverlay::recomputePendingStocks() {
@@ -258,11 +379,30 @@ DeviationInfo HudOverlay::computeDeviation(const QString &stockKey, const QVecto
     }
 
     QVector<DailyBarLite> idxBars = m_indexBars.value(idxKey);
+    QString effIdxKey = idxKey;
     if (idxBars.isEmpty() && !fallbackKey.isEmpty()) {
         idxBars = m_indexBars.value(fallbackKey);
+        effIdxKey = fallbackKey;
         idxName = "上证指数";
     }
     if (idxBars.isEmpty()) return out;
+
+    auto upsertLiveBar = [](QVector<DailyBarLite> &bars, const DailyBarLite &live) {
+        if (live.date <= 0 || live.close <= 0 || bars.isEmpty()) return;
+        if (bars.back().date == live.date) {
+            bars.back().close = live.close;
+        } else if (live.date > bars.back().date) {
+            bars.append(live);
+        }
+    };
+
+    QVector<DailyBarLite> mergedStkBars = stkBars;
+    if (m_liveStockQuotes.contains(stockKey)) {
+        upsertLiveBar(mergedStkBars, m_liveStockQuotes.value(stockKey));
+    }
+    if (m_liveIndexQuotes.contains(effIdxKey)) {
+        upsertLiveBar(idxBars, m_liveIndexQuotes.value(effIdxKey));
+    }
 
     QMap<int, double> idxMap;
     for (const auto &b : idxBars) {
@@ -271,8 +411,8 @@ DeviationInfo HudOverlay::computeDeviation(const QString &stockKey, const QVecto
 
     struct Row { int date; double c; double idx; };
     QVector<Row> aligned;
-    aligned.reserve(stkBars.size());
-    for (const auto &b : stkBars) {
+    aligned.reserve(mergedStkBars.size());
+    for (const auto &b : mergedStkBars) {
         auto it = idxMap.constFind(b.date);
         if (it != idxMap.constEnd() && b.close > 0 && it.value() > 0) {
             aligned.append({b.date, b.close, it.value()});

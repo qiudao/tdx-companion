@@ -13,6 +13,7 @@ struct PeerQuote {
     double price = 0.0;
     double pct = 0.0;
     double amount = 0.0; // 万元
+    int tradeDate = 0;   // YYYYMMDD from Tencent quote
 };
 
 class TdxBridge : public QObject {

@@ -498,6 +498,9 @@ void MainWindow::onQuotesBatchReady(int requestToken, const QMap<QString, PeerQu
     for (auto it = quotes.begin(); it != quotes.end(); ++it) {
         m_peerQuotes[it.key()] = it.value();
     }
+    if (m_hud) {
+        m_hud->updateLiveQuotes(quotes);
+    }
     rebuildPeerTable();
 }
 
