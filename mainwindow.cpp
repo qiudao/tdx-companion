@@ -39,12 +39,21 @@ MainWindow::MainWindow(QWidget *parent)
 
     // Full-Screen Transparent Click-Through Car-HUD
     m_hud = new HudOverlay(nullptr);
-    if (m_hudEnabled) m_hud->show();
     connect(m_hud, &HudOverlay::deviationUpdated, this, [this](const QString &key) {
         if (m_peerQuotes.contains(key)) {
             rebuildPeerTable();
         }
     });
+
+    // Follow Tongdaxin / Parallels foreground & background state on macOS
+    m_fgWatcher = new MacForegroundWatcher(this);
+    m_tdxFrontmost = m_fgWatcher->isTdxOrSelfFrontmost();
+    connect(m_fgWatcher, &MacForegroundWatcher::foregroundChanged, this,
+            [this](bool isTdxOrSelf, const QString &, const QString &) {
+        m_tdxFrontmost = isTdxOrSelf;
+        syncVisibilityWithTdxForeground();
+    });
+    if (m_hudEnabled && m_tdxFrontmost) m_hud->show();
 
     auto *scHud = new QShortcut(QKeySequence("Ctrl+U"), this);
     connect(scHud, &QShortcut::activated, this, [this]() {
@@ -289,16 +298,41 @@ void MainWindow::applyWindowFlags() {
     raise();
 }
 
+void MainWindow::syncVisibilityWithTdxForeground() {
+    const bool winActive = isVisible() && !isMinimized();
+    if (m_hud) {
+        const bool shouldShowHud = m_hudEnabled && m_tdxFrontmost && winActive;
+        if (shouldShowHud) {
+            if (!m_hud->isVisible()) m_hud->show();
+            MacForegroundWatcher::setWindowFloating(m_hud, m_alwaysOnTop, true);
+        } else {
+            if (m_hud->isVisible()) m_hud->hide();
+        }
+    }
+
+    if (winActive) {
+        if (m_tdxFrontmost) {
+            if (m_alwaysOnTop) {
+                MacForegroundWatcher::setWindowFloating(this, true, true);
+            }
+        } else {
+            MacForegroundWatcher::setWindowFloating(this, false, false);
+        }
+    }
+}
+
 void MainWindow::onToggleAlwaysOnTop(bool checked) {
     m_alwaysOnTop = checked;
     if (m_hud) m_hud->setAlwaysOnTop(checked);
     applyWindowFlags();
+    syncVisibilityWithTdxForeground();
 }
 
 void MainWindow::onToggleFrameless(bool checked) {
     m_frameless = checked;
     m_btnFrameless->setText(checked ? "有框" : "无框");
     applyWindowFlags();
+    syncVisibilityWithTdxForeground();
 }
 
 void MainWindow::onToggleHud(bool checked) {
@@ -306,17 +340,13 @@ void MainWindow::onToggleHud(bool checked) {
     if (!m_hud) return;
     if (checked) {
         m_hud->reloadMarketBreadth();
-        m_hud->show();
-    } else {
-        m_hud->hide();
     }
+    syncVisibilityWithTdxForeground();
 }
 
 void MainWindow::showEvent(QShowEvent *event) {
     QMainWindow::showEvent(event);
-    if (m_hud && m_hudEnabled && !isMinimized()) {
-        m_hud->show();
-    }
+    QTimer::singleShot(0, this, &MainWindow::syncVisibilityWithTdxForeground);
 }
 
 void MainWindow::hideEvent(QHideEvent *event) {
@@ -326,12 +356,8 @@ void MainWindow::hideEvent(QHideEvent *event) {
 
 void MainWindow::changeEvent(QEvent *event) {
     QMainWindow::changeEvent(event);
-    if (event->type() == QEvent::WindowStateChange && m_hud) {
-        if (isMinimized()) {
-            m_hud->hide();
-        } else if (m_hudEnabled && isVisible()) {
-            m_hud->show();
-        }
+    if (event->type() == QEvent::WindowStateChange) {
+        syncVisibilityWithTdxForeground();
     }
 }
 

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(tdx_companion VERSION 0.1 LANGUAGES CXX)
+project(tdx_companion VERSION 0.1 LANGUAGES CXX OBJCXX)
 
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTOMOC ON)
@@ -22,6 +22,8 @@ find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets Network)
 
 set(PROJECT_SOURCES
     main.cpp
+    macwindowhelper.h
+    macwindowhelper.mm
     tdxbridge.h
     tdxbridge.cpp
     hudoverlay.h
@@ -41,6 +43,7 @@ target_link_libraries(tdx_companion PRIVATE
     Qt${QT_VERSION_MAJOR}::Network
     iconv
     sqlite3
+    "-framework AppKit"
 )
 
 set_target_properties(tdx_companion PROPERTIES

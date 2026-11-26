@@ -9,6 +9,7 @@
 #include <QPoint>
 #include "tdxbridge.h"
 #include "hudoverlay.h"
+#include "macwindowhelper.h"
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -39,12 +40,14 @@ private:
     void setupUi();
     void applyTdxClassicTheme();
     void applyWindowFlags();
+    void syncVisibilityWithTdxForeground();
     void displayCategory(const QString &category);
     void rebuildPeerTable();
     void switchToPeer(const QString &peerKey);
 
     TdxBridge *m_bridge = nullptr;
     HudOverlay *m_hud = nullptr;
+    MacForegroundWatcher *m_fgWatcher = nullptr;
     QTimer *m_autoTimer = nullptr;
 
     QString m_activeStockKey;
@@ -58,6 +61,7 @@ private:
     bool m_alwaysOnTop = true;
     bool m_frameless = false;
     bool m_hudEnabled = true;
+    bool m_tdxFrontmost = true;
 
     // Frameless drag state
     bool m_dragging = false;
