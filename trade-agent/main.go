@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	agentVersion = "0.9.1"
+	agentVersion = "0.9.2"
 	defaultAddr  = "0.0.0.0:19877"
 	xiadanExe    = "xiadan.exe"
 )
@@ -42,31 +42,30 @@ func isTradingHours(now time.Time) bool {
 		return false
 	}
 	hm := now.Hour()*100 + now.Minute()
-	return (hm >= 915 && hm <= 1132) || (hm >= 1258 && hm <= 1502)
+	// Continuous weekday keepalive 08:30-15:30 (covers pre-market + lunch break to prevent 600s auto-lock)
+	return hm >= 830 && hm <= 1530
 }
 
 func startKeepaliveLoop() {
 	go func() {
 		var lastRun time.Time
-		ticker := time.NewTicker(15 * time.Second)
-		defer ticker.Stop()
-		for now := range ticker.C {
+		runOnce := func(now time.Time) {
 			keepalive.mu.Lock()
 			enabled := keepalive.Enabled
 			interval := time.Duration(keepalive.IntervalSec) * time.Second
 			keepalive.mu.Unlock()
 
 			if !enabled || interval < 30*time.Second {
-				continue
+				return
 			}
 			if !isTradingHours(now) {
-				continue
+				return
 			}
 			if !lastRun.IsZero() && now.Sub(lastRun) < interval {
-				continue
+				return
 			}
 			if riskMgr.Config().Halted {
-				continue
+				return
 			}
 			citicStatus := "offline"
 			pid := findProcessPID(xiadanExe)
@@ -89,6 +88,13 @@ func startKeepaliveLoop() {
 			keepalive.GTJAStatus = gtjaStatus
 			keepalive.GSStatus = gsStatus
 			keepalive.mu.Unlock()
+		}
+		time.Sleep(2 * time.Second)
+		runOnce(time.Now())
+		ticker := time.NewTicker(15 * time.Second)
+		defer ticker.Stop()
+		for now := range ticker.C {
+			runOnce(now)
 		}
 	}()
 }
