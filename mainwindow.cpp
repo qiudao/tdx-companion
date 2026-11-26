@@ -23,6 +23,13 @@ MainWindow::MainWindow(QWidget *parent)
     setGeometry(avail.right() - 220 + 1, avail.top(), 220, avail.height());
 
     connect(m_bridge, &TdxBridge::activeStockDetected, this, &MainWindow::onActiveStockDetected);
+    connect(m_bridge, &TdxBridge::viewStateChanged, this,
+            [this](bool isKlineView, const QString &viewLabel, const QString &rawBracket) {
+        m_tdxInKlineView = isKlineView;
+        m_tdxViewLabel = viewLabel;
+        m_tdxRawBracket = rawBracket;
+        syncVisibilityWithTdxForeground();
+    });
     connect(m_bridge, &TdxBridge::quotesBatchReady, this, &MainWindow::onQuotesBatchReady);
     connect(m_bridge, &TdxBridge::statusMessage, this, [this](const QString &msg) {
         m_statusLbl->setText(msg);
@@ -53,7 +60,7 @@ MainWindow::MainWindow(QWidget *parent)
         m_tdxFrontmost = isTdxOrSelf;
         syncVisibilityWithTdxForeground();
     });
-    if (m_hudEnabled && m_tdxFrontmost) m_hud->show();
+    if (m_hudEnabled && m_tdxFrontmost && m_tdxInKlineView) m_hud->show();
 
     auto *scHud = new QShortcut(QKeySequence("Ctrl+U"), this);
     connect(scHud, &QShortcut::activated, this, [this]() {
@@ -192,7 +199,11 @@ void MainWindow::setupUi() {
     connect(m_peerTable, &QTableWidget::customContextMenuRequested, this, &MainWindow::onTableContextMenu);
     root->addWidget(m_peerTable, 1);
 
-    // 5. Classic TDX Bottom Status Strip
+    // 5. Classic TDX Bottom View-State & Status Strips
+    m_viewStateLbl = new QLabel("视图: 检测中...");
+    m_viewStateLbl->setObjectName("tdxViewStateBar");
+    root->addWidget(m_viewStateLbl);
+
     m_statusLbl = new QLabel("连接中...");
     m_statusLbl->setObjectName("tdxStatusBar");
     root->addWidget(m_statusLbl);
@@ -224,9 +235,16 @@ void MainWindow::applyTdxClassicTheme() {
             font-size: 11px;
             color: #B0B0B0;
         }
+        QLabel#tdxViewStateBar {
+            background-color: #0E0E0E;
+            border-top: 1px solid #440000;
+            padding: 2px 6px;
+            font-size: 11px;
+            color: #FFD700;
+        }
         QLabel#tdxStatusBar {
             background-color: #0A0A0A;
-            border-top: 1px solid #440000;
+            border-top: 1px solid #2A0000;
             padding: 2px 6px;
             font-size: 10px;
             color: #888888;
@@ -298,10 +316,32 @@ void MainWindow::applyWindowFlags() {
     raise();
 }
 
+void MainWindow::updateViewStateLabel() {
+    if (!m_viewStateLbl) return;
+    const bool hudShown = m_hud && m_hud->isVisible();
+    const QString viewCol = m_tdxInKlineView ? "#00E676" : "#FF9800";
+    const QString hudCol = hudShown ? "#00FFFF" : "#777777";
+    const QString hudTxt = !m_hudEnabled ? "关" : (hudShown ? "显" : "隐");
+    QString rawPart;
+    if (!m_tdxRawBracket.isEmpty()) {
+        int dash = m_tdxRawBracket.indexOf('-');
+        QString prefix = dash > 0 ? m_tdxRawBracket.left(dash) : m_tdxRawBracket;
+        if (prefix != m_tdxViewLabel) {
+            rawPart = QString(" <span style='color:#888888'>(%1)</span>").arg(prefix.left(8).toHtmlEscaped());
+        }
+    }
+    m_viewStateLbl->setText(
+        QString("视图: <b style='color:%1'>%2</b>%3 · <span style='color:%4'>HUD:%5</span>")
+            .arg(viewCol, m_tdxViewLabel.toHtmlEscaped(), rawPart, hudCol, hudTxt));
+    if (!m_tdxRawBracket.isEmpty()) {
+        m_viewStateLbl->setToolTip("通达信窗口标题: [" + m_tdxRawBracket + "]");
+    }
+}
+
 void MainWindow::syncVisibilityWithTdxForeground() {
     const bool winActive = isVisible() && !isMinimized();
     if (m_hud) {
-        const bool shouldShowHud = m_hudEnabled && m_tdxFrontmost && winActive;
+        const bool shouldShowHud = m_hudEnabled && m_tdxFrontmost && m_tdxInKlineView && winActive;
         if (shouldShowHud) {
             if (!m_hud->isVisible()) m_hud->show();
             MacForegroundWatcher::setWindowFloating(m_hud, m_alwaysOnTop, true);
@@ -319,6 +359,7 @@ void MainWindow::syncVisibilityWithTdxForeground() {
             MacForegroundWatcher::setWindowFloating(this, false, false);
         }
     }
+    updateViewStateLabel();
 }
 
 void MainWindow::onToggleAlwaysOnTop(bool checked) {

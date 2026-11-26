@@ -48,6 +48,7 @@ public:
 
 signals:
     void activeStockDetected(const QString &stockKey, const QString &stockName);
+    void viewStateChanged(bool isKlineView, const QString &viewLabel, const QString &rawBracket);
     void quotesBatchReady(int requestToken, const QMap<QString, PeerQuote> &quotes);
     void statusMessage(const QString &msg);
 
@@ -68,6 +69,9 @@ private:
     QString m_vmIp;
     QString m_lastStockName;
     QString m_lastRawTitle;
+    bool m_hasViewState = false;
+    bool m_lastIsKline = false;
+    QString m_lastViewLabel;
     bool m_pollInFlight = false;
     int m_failCount = 0;
 

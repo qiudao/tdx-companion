@@ -295,11 +295,44 @@ void TdxBridge::pollAgentStatus() {
         const QString title = obj["title"].toString();
         const QString stock = obj["stock"].toString().trimmed();
 
-        if (!title.isEmpty() && title != m_lastRawTitle) {
+        // Parse Tongdaxin view mode from window title bracket, e.g. "[分析图表-凡拓数创]"
+        QString inner;
+        int lb = title.lastIndexOf('[');
+        int rb = title.lastIndexOf(']');
+        if (lb >= 0 && rb > lb) {
+            inner = title.mid(lb + 1, rb - lb - 1).trimmed();
+        }
+        bool isKline = false;
+        QString viewLabel;
+        if (inner.contains("分析图表")) {
+            isKline = true;
+            viewLabel = "K线图";
+        } else if (inner.contains("分时")) {
+            viewLabel = "分时图";
+        } else if (inner.contains("行情报价")) {
+            viewLabel = "行情报价";
+        } else if (inner.contains("综合排名")) {
+            viewLabel = "综合排名";
+        } else if (inner.contains("基本资料") || inner.contains("F10", Qt::CaseInsensitive)) {
+            viewLabel = "F10资料";
+        } else if (inner.isEmpty()) {
+            viewLabel = title.isEmpty() ? "未检测" : "主界面";
+        } else {
+            int dash = inner.indexOf('-');
+            viewLabel = (dash > 0 ? inner.left(dash) : inner).left(8);
+        }
+
+        const bool titleChanged = (!title.isEmpty() && title != m_lastRawTitle);
+        if (titleChanged) {
             m_lastRawTitle = title;
-            int lb = title.lastIndexOf('[');
             QString shortT = lb >= 0 ? title.mid(lb) : title;
             emit statusMessage("联动 · " + shortT);
+        }
+        if (!m_hasViewState || isKline != m_lastIsKline || viewLabel != m_lastViewLabel || titleChanged) {
+            m_hasViewState = true;
+            m_lastIsKline = isKline;
+            m_lastViewLabel = viewLabel;
+            emit viewStateChanged(isKline, viewLabel, inner);
         }
 
         if (!stock.isEmpty() && stock != m_lastStockName) {

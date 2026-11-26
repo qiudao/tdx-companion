@@ -41,6 +41,7 @@ private:
     void applyTdxClassicTheme();
     void applyWindowFlags();
     void syncVisibilityWithTdxForeground();
+    void updateViewStateLabel();
     void displayCategory(const QString &category);
     void rebuildPeerTable();
     void switchToPeer(const QString &peerKey);
@@ -62,6 +63,9 @@ private:
     bool m_frameless = false;
     bool m_hudEnabled = true;
     bool m_tdxFrontmost = true;
+    bool m_tdxInKlineView = false;
+    QString m_tdxViewLabel = "检测中";
+    QString m_tdxRawBracket;
 
     // Frameless drag state
     bool m_dragging = false;
@@ -71,6 +75,7 @@ private:
     QLabel *m_stockTitleLbl = nullptr;
     QLabel *m_categoryLbl = nullptr;
     QLabel *m_statLbl = nullptr;
+    QLabel *m_viewStateLbl = nullptr;
     QLabel *m_statusLbl = nullptr;
 
     QPushButton *m_btnFollow = nullptr;
