@@ -253,6 +253,10 @@ func dispatchTradeAction(msg hjMessage) {
 		method = http.MethodPost
 		path = "/gs/submit"
 		reqBody = msg.Payload
+	case "trade.gs.cancel":
+		method = http.MethodPost
+		path = "/gs/cancel"
+		reqBody = msg.Payload
 	case "trade.gs.dialogs":
 		path = "/gs/dialogs"
 	case "trade.gs.dialog.dismiss":
@@ -284,6 +288,10 @@ func dispatchTradeAction(msg hjMessage) {
 	case "trade.gtja.submit":
 		method = http.MethodPost
 		path = "/gtja/submit"
+		reqBody = msg.Payload
+	case "trade.gtja.cancel":
+		method = http.MethodPost
+		path = "/gtja/cancel"
 		reqBody = msg.Payload
 	case "trade.gtja.screenshot":
 		path = "/gtja/screenshot"

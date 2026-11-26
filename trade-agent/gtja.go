@@ -352,3 +352,86 @@ func handleGTJAScreenshot(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(pngBytes)
 }
+
+type gtjaCancelReq struct {
+	Scope   string `json:"scope"` // "all" (default) | "buy" | "sell"
+	Confirm bool   `json:"confirm"`
+}
+
+func handleGTJACancel(w http.ResponseWriter, r *http.Request) {
+	var req gtjaCancelReq
+	if r.Body != nil {
+		_ = json.NewDecoder(r.Body).Decode(&req)
+	}
+	if !req.Confirm {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "err": "confirm=true is required to cancel orders"})
+		return
+	}
+	btnLabel := "全撤(/)"
+	switch strings.ToLower(strings.TrimSpace(req.Scope)) {
+	case "buy":
+		btnLabel = "撤买([)"
+	case "sell":
+		btnLabel = "撤卖(])"
+	}
+	script := gtjaPSHeader + fmt.Sprintf(`
+$p = Get-GTJAProc
+if (-not $p) { @{ok=$false; err="gtja jy.exe not found"} | ConvertTo-Json -Compress; exit 0 }
+[GTJAUtil]::Focus($p.MainWindowHandle)
+[System.Windows.Forms.SendKeys]::SendWait("{F3}")
+Start-Sleep -Milliseconds 450
+$root = [System.Windows.Automation.AutomationElement]::FromHandle($p.MainWindowHandle)
+$all = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
+$target = $null
+foreach ($it in $all) {
+  $ct = $it.Current.ControlType.ProgrammaticName.Replace("ControlType.","")
+  if ($ct -eq "Button" -and $it.Current.Name -eq "%s") { $target = $it; break }
+}
+if (-not $target) { @{ok=$false; err="cancel button %s not found"} | ConvertTo-Json -Compress; exit 0 }
+$tr = $target.Current.BoundingRectangle
+[GTJAUtil]::ClickAt([int]($tr.X + $tr.Width / 2), [int]($tr.Y + $tr.Height / 2))
+Start-Sleep -Milliseconds 450
+@{ok=$true; broker="gtja"; clicked="%s"} | ConvertTo-Json -Compress
+`, btnLabel, btnLabel, btnLabel)
+
+	res, err := runGTJAPowerShell(script, 15)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "err": err.Error()})
+		return
+	}
+	riskMgr.LogAudit("gtja_cancel", true, map[string]any{"scope": req.Scope, "button": btnLabel}, "")
+	writeJSON(w, http.StatusOK, res)
+}
+
+// gtjaKeepalivePing silently invokes the sidebar "刷新" button via UIA InvokePattern (no focus stealing) to reset the 600s auto-lock timer.
+func gtjaKeepalivePing() string {
+	script := `
+Add-Type -AssemblyName UIAutomationClient
+Add-Type -AssemblyName UIAutomationTypes
+$p = Get-Process -Name jy -EA SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
+if (-not $p) { @{status="offline"} | ConvertTo-Json -Compress; exit 0 }
+$root = [System.Windows.Automation.AutomationElement]::FromHandle($p.MainWindowHandle)
+$cond = New-Object System.Windows.Automation.AndCondition(
+  (New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button)),
+  (New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::NameProperty, "刷新"))
+)
+$btns = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants, $cond)
+foreach ($b in $btns) {
+  $ip = $null
+  if ($b.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$ip)) {
+    $ip.Invoke()
+    @{status="ok_uia_refresh"} | ConvertTo-Json -Compress
+    exit 0
+  }
+}
+@{status="no_refresh_btn"} | ConvertTo-Json -Compress
+`
+	res, err := runGTJAPowerShell(script, 8)
+	if err != nil {
+		return "err"
+	}
+	if s, ok := res["status"].(string); ok && s != "" {
+		return s
+	}
+	return "ok"
+}

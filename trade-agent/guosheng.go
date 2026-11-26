@@ -444,5 +444,80 @@ func handleGSDialogDismiss(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "broker": "guosheng", "dialog": snap, "action": act})
 }
 
+type gsCancelReq struct {
+	Scope         string `json:"scope"` // "all" (default)
+	Confirm       bool   `json:"confirm"`
+	ConfirmDialog bool   `json:"confirm_dialog"`
+}
+
+func handleGSCancel(w http.ResponseWriter, r *http.Request) {
+	gw, ok := findGuoshengTradeWindow()
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]any{"ok": false, "err": "guosheng trade panel not found"})
+		return
+	}
+	var req gsCancelReq
+	if r.Body != nil {
+		_ = json.NewDecoder(r.Body).Decode(&req)
+	}
+	if !req.Confirm {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "err": "confirm=true is required to cancel orders"})
+		return
+	}
+	if _, err := gsNavigate(gw, "cancel"); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "err": err.Error()})
+		return
+	}
+	if refBtn, okR := findVisibleCtrlByIDAndClass(gw.TradeDlg, 1140, "Button"); okR {
+		clickButton(refBtn.Hwnd)
+		time.Sleep(350 * time.Millisecond)
+	}
+	if selAll, okS := findVisibleCtrlByIDAndClass(gw.TradeDlg, 14, "Button"); okS {
+		clickButton(selAll.Hwnd)
+		time.Sleep(200 * time.Millisecond)
+	}
+	cancelBtn, okC := findVisibleCtrlByIDAndClass(gw.TradeDlg, 1136, "Button")
+	if !okC {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "err": "cancel button (1136) not found"})
+		return
+	}
+	clickButton(cancelBtn.Hwnd)
+	time.Sleep(450 * time.Millisecond)
+
+	var dialogs []any
+	for i := 0; i < 2; i++ {
+		dlgs := findVisibleDialogs(gw.PID)
+		if len(dlgs) == 0 {
+			break
+		}
+		if req.ConfirmDialog {
+			snap, act := dismissDialog(dlgs[0], true)
+			dialogs = append(dialogs, map[string]any{"dialog": snap, "action": act})
+			time.Sleep(350 * time.Millisecond)
+		} else {
+			snap, _ := inspectDialog(dlgs[0])
+			dialogs = append(dialogs, map[string]any{"dialog": snap, "action": "left_open"})
+			break
+		}
+	}
+	riskMgr.LogAudit("gs_cancel", true, map[string]any{"scope": req.Scope, "dialogs": len(dialogs)}, "")
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "broker": "guosheng", "dialogs": dialogs})
+}
+
+func gsKeepalivePing() string {
+	gw, ok := findGuoshengTradeWindow()
+	if !ok {
+		return "offline"
+	}
+	if len(findVisibleDialogs(gw.PID)) > 0 {
+		return "paused_dialog"
+	}
+	if refBtn, okR := findVisibleCtrlByIDAndClass(gw.TradeDlg, 1140, "Button"); okR {
+		clickButton(refBtn.Hwnd)
+		return "ok_btn_1140"
+	}
+	return "online_no_refresh_btn"
+}
+
 // Keep unused syscall import check happy if needed
 var _ = syscall.UTF16ToString

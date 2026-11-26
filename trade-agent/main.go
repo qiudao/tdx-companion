@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	agentVersion = "0.9.0"
+	agentVersion = "0.9.1"
 	defaultAddr  = "0.0.0.0:19877"
 	xiadanExe    = "xiadan.exe"
 )
@@ -27,6 +27,8 @@ type KeepaliveState struct {
 	LastPingAt  string `json:"last_ping_at,omitempty"`
 	PingCount   int    `json:"ping_count"`
 	LastStatus  string `json:"last_status,omitempty"`
+	GTJAStatus  string `json:"gtja_status,omitempty"`
+	GSStatus    string `json:"gs_status,omitempty"`
 }
 
 var keepalive = &KeepaliveState{
@@ -66,27 +68,27 @@ func startKeepaliveLoop() {
 			if riskMgr.Config().Halted {
 				continue
 			}
+			citicStatus := "offline"
 			pid := findProcessPID(xiadanExe)
-			mainWin, ok := findMainXiadanWindow(pid)
-			if !ok {
-				continue
+			if mainWin, ok := findMainXiadanWindow(pid); ok {
+				if len(findVisibleDialogs(pid)) > 0 {
+					citicStatus = "paused_dialog_active"
+				} else if refreshBtn, okR := findVisibleCtrlByIDAndClass(mainWin.Hwnd, 32790, "Button"); okR {
+					clickButton(refreshBtn.Hwnd)
+					citicStatus = "ok_btn_32790"
+				}
 			}
-			if len(findVisibleDialogs(pid)) > 0 {
-				keepalive.mu.Lock()
-				keepalive.LastStatus = "paused_dialog_active"
-				keepalive.mu.Unlock()
-				continue
-			}
-			// Silent refresh via button 32790 (no foreground focus stealing)
-			if refreshBtn, okR := findVisibleCtrlByIDAndClass(mainWin.Hwnd, 32790, "Button"); okR {
-				clickButton(refreshBtn.Hwnd)
-				lastRun = now
-				keepalive.mu.Lock()
-				keepalive.LastPingAt = now.Format(time.RFC3339)
-				keepalive.PingCount++
-				keepalive.LastStatus = "ok_btn_32790"
-				keepalive.mu.Unlock()
-			}
+			gtjaStatus := gtjaKeepalivePing()
+			gsStatus := gsKeepalivePing()
+
+			lastRun = now
+			keepalive.mu.Lock()
+			keepalive.LastPingAt = now.Format(time.RFC3339)
+			keepalive.PingCount++
+			keepalive.LastStatus = citicStatus
+			keepalive.GTJAStatus = gtjaStatus
+			keepalive.GSStatus = gsStatus
+			keepalive.mu.Unlock()
 		}
 	}()
 }
@@ -100,6 +102,8 @@ func (k *KeepaliveState) Snapshot() map[string]any {
 		"last_ping_at": k.LastPingAt,
 		"ping_count":   k.PingCount,
 		"last_status":  k.LastStatus,
+		"gtja_status":  k.GTJAStatus,
+		"gs_status":    k.GSStatus,
 	}
 }
 
@@ -854,12 +858,14 @@ func main() {
 	mux.HandleFunc("/gs/screenshot", withAuth(handleGSScreenshot))
 	mux.HandleFunc("/gs/dialogs", withAuth(handleGSDialogs))
 	mux.HandleFunc("/gs/dialog/dismiss", withAuth(handleGSDialogDismiss))
+	mux.HandleFunc("/gs/cancel", withAuth(handleGSCancel))
 
 	// Guotai Haitong Securities (RichEZ Qt5 jy.exe via UIA)
 	mux.HandleFunc("/gtja/health", withAuth(handleGTJAHealth))
 	mux.HandleFunc("/gtja/nav", withAuth(handleGTJANav))
 	mux.HandleFunc("/gtja/prefill", withAuth(handleGTJAPrefill))
 	mux.HandleFunc("/gtja/submit", withAuth(handleGTJASubmit))
+	mux.HandleFunc("/gtja/cancel", withAuth(handleGTJACancel))
 	mux.HandleFunc("/gtja/screenshot", withAuth(handleGTJAScreenshot))
 
 	_ = http.ListenAndServe(addr, mux)
