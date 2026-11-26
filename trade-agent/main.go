@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	agentVersion = "0.7.0"
+	agentVersion = "0.8.0"
 	defaultAddr  = "0.0.0.0:19877"
 	xiadanExe    = "xiadan.exe"
 )
@@ -846,6 +846,14 @@ func main() {
 	mux.HandleFunc("/order/cancel", withAuth(handleOrderCancel))
 	mux.HandleFunc("/risk/halt", withAuth(handleRiskHalt))
 	mux.HandleFunc("/risk/resume", withAuth(handleRiskResume))
+	// Guosheng Securities (TDX V6 embedded trade panel)
+	mux.HandleFunc("/gs/health", withAuth(handleGSHealth))
+	mux.HandleFunc("/gs/nav", withAuth(handleGSNav))
+	mux.HandleFunc("/gs/prefill", withAuth(handleGSPrefill))
+	mux.HandleFunc("/gs/submit", withAuth(handleGSSubmit))
+	mux.HandleFunc("/gs/screenshot", withAuth(handleGSScreenshot))
+	mux.HandleFunc("/gs/dialogs", withAuth(handleGSDialogs))
+	mux.HandleFunc("/gs/dialog/dismiss", withAuth(handleGSDialogDismiss))
 
 	_ = http.ListenAndServe(addr, mux)
 }
