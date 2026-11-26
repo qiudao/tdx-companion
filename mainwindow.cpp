@@ -176,9 +176,9 @@ void MainWindow::setupUi() {
     m_statLbl->setObjectName("tdxStatBar");
     root->addWidget(m_statLbl);
 
-    // 4. Classic TDX High-Density Peer Table (22px rows, pure black, yellow names, red/green pct)
-    m_peerTable = new QTableWidget(0, 3);
-    m_peerTable->setHorizontalHeaderLabels({"名称", "现价", "涨幅%"});
+    // 4. Classic TDX High-Density Peer Table (22px rows, pure black, yellow names, red/green pct, cyan amount)
+    m_peerTable = new QTableWidget(0, 4);
+    m_peerTable->setHorizontalHeaderLabels({"名称", "现价", "涨幅%", "额(亿)"});
     m_peerTable->verticalHeader()->setVisible(false);
     m_peerTable->verticalHeader()->setDefaultSectionSize(22);
     m_peerTable->setSelectionBehavior(QAbstractItemView::SelectRows);
@@ -187,8 +187,9 @@ void MainWindow::setupUi() {
     m_peerTable->setShowGrid(true);
     m_peerTable->setContextMenuPolicy(Qt::CustomContextMenu);
     m_peerTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
-    m_peerTable->setColumnWidth(1, 56);
-    m_peerTable->setColumnWidth(2, 62);
+    m_peerTable->setColumnWidth(1, 46);
+    m_peerTable->setColumnWidth(2, 52);
+    m_peerTable->setColumnWidth(3, 44);
     m_peerTable->installEventFilter(this);
 
     connect(m_peerTable, &QTableWidget::cellClicked, this, [this](int row, int) {
@@ -575,6 +576,20 @@ void MainWindow::rebuildPeerTable() {
         auto *c2 = new QTableWidgetItem(q.price > 0 ? QString("%1%2%").arg(q.pct > 0 ? "+" : "").arg(q.pct, 0, 'f', 2) : "--");
         c2->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
 
+        const double amtYi = q.amount / 10000.0;
+        QString amtText = "--";
+        if (q.amount > 0) {
+            if (amtYi >= 100.0) amtText = QString::number(amtYi, 'f', 0);
+            else if (amtYi >= 10.0) amtText = QString::number(amtYi, 'f', 1);
+            else amtText = QString::number(amtYi, 'f', 2);
+        }
+        auto *c3 = new QTableWidgetItem(amtText);
+        c3->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        c3->setForeground(amtYi >= 10.0 ? QColor("#00FFFF") : QColor("#66B8B8"));
+        if (q.amount > 0) {
+            c3->setToolTip(QString("成交额: %1 亿").arg(amtYi, 0, 'f', 2));
+        }
+
         // Classic TDX Red / Green / White
         const QColor col = q.pct > 0 ? QColor("#FF3232") : (q.pct < 0 ? QColor("#00E600") : QColor("#FFFFFF"));
         c1->setForeground(col);
@@ -586,6 +601,7 @@ void MainWindow::rebuildPeerTable() {
             c0->setBackground(QColor("#000078"));
             c1->setBackground(QColor("#000078"));
             c2->setBackground(QColor("#000078"));
+            c3->setBackground(QColor("#000078"));
         } else if (q.pct >= 9.8) {
             QFont f = c2->font(); f.setBold(true);
             c2->setFont(f);
@@ -595,6 +611,7 @@ void MainWindow::rebuildPeerTable() {
         m_peerTable->setItem(i, 0, c0);
         m_peerTable->setItem(i, 1, c1);
         m_peerTable->setItem(i, 2, c2);
+        m_peerTable->setItem(i, 3, c3);
     }
 
     if (activeRow >= 0) m_peerTable->selectRow(activeRow);
