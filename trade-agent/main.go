@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	agentVersion = "0.8.0"
+	agentVersion = "0.9.0"
 	defaultAddr  = "0.0.0.0:19877"
 	xiadanExe    = "xiadan.exe"
 )
@@ -854,6 +854,13 @@ func main() {
 	mux.HandleFunc("/gs/screenshot", withAuth(handleGSScreenshot))
 	mux.HandleFunc("/gs/dialogs", withAuth(handleGSDialogs))
 	mux.HandleFunc("/gs/dialog/dismiss", withAuth(handleGSDialogDismiss))
+
+	// Guotai Haitong Securities (RichEZ Qt5 jy.exe via UIA)
+	mux.HandleFunc("/gtja/health", withAuth(handleGTJAHealth))
+	mux.HandleFunc("/gtja/nav", withAuth(handleGTJANav))
+	mux.HandleFunc("/gtja/prefill", withAuth(handleGTJAPrefill))
+	mux.HandleFunc("/gtja/submit", withAuth(handleGTJASubmit))
+	mux.HandleFunc("/gtja/screenshot", withAuth(handleGTJAScreenshot))
 
 	_ = http.ListenAndServe(addr, mux)
 }

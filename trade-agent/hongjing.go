@@ -268,6 +268,26 @@ func dispatchTradeAction(msg hjMessage) {
 		}
 		path = "/gs/screenshot?" + q.Encode()
 		isPNG = true
+	case "trade.gtja.health":
+		path = "/gtja/health"
+	case "trade.gtja.nav":
+		method = http.MethodPost
+		tab := strParam("tab")
+		if tab == "" {
+			tab = strParam("key")
+		}
+		path = "/gtja/nav?tab=" + url.QueryEscape(tab)
+	case "trade.gtja.prefill":
+		method = http.MethodPost
+		path = "/gtja/prefill"
+		reqBody = msg.Payload
+	case "trade.gtja.submit":
+		method = http.MethodPost
+		path = "/gtja/submit"
+		reqBody = msg.Payload
+	case "trade.gtja.screenshot":
+		path = "/gtja/screenshot"
+		isPNG = true
 	default:
 		sendHongjingResponse(msg, map[string]any{"ok": false, "err": "unknown trade action: " + msg.Action})
 		return
