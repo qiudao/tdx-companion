@@ -203,39 +203,31 @@ void HudOverlay::fetchLiveIndexQuotes() {
 }
 
 void HudOverlay::fetchIndexBarsIfNeeded() {
+    if (m_agentBaseUrl.isEmpty()) return;
     const QStringList idxKeys = {"1999998", "1000001", "1000688", "0399107", "0399102"};
     for (const QString &ik : idxKeys) {
         if (m_indexBars.contains(ik) || m_inFlight.contains(ik)) continue;
-        const QString sym = toTencentSymbol(ik);
-        if (sym.isEmpty()) continue;
         m_inFlight.insert(ik);
-        QUrl url(QString("https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=%1,day,,,45,qfq").arg(sym));
-        QNetworkRequest req(url);
-        req.setRawHeader("User-Agent", "Mozilla/5.0");
-        QNetworkReply *reply = m_nam->get(req);
-        connect(reply, &QNetworkReply::finished, this, [this, reply, ik, sym]() {
+        QUrl url(QString("%1/data/bars?key=%2&period=day&limit=45").arg(m_agentBaseUrl, ik));
+        QNetworkReply *reply = m_nam->get(QNetworkRequest(url));
+        connect(reply, &QNetworkReply::finished, this, [this, reply, ik]() {
             m_inFlight.remove(ik);
             const QByteArray raw = reply->readAll();
             const auto err = reply->error();
             reply->deleteLater();
             if (err != QNetworkReply::NoError || raw.isEmpty()) {
-                QTimer::singleShot(1500, this, [this]() { fetchIndexBarsIfNeeded(); });
+                QTimer::singleShot(1000, this, [this]() { fetchIndexBarsIfNeeded(); });
                 return;
             }
 
-            const QJsonObject root = QJsonDocument::fromJson(raw).object();
-            const QJsonObject symObj = root.value("data").toObject().value(sym).toObject();
-            QJsonArray arr = symObj.value("qfqday").toArray();
-            if (arr.isEmpty()) arr = symObj.value("day").toArray();
+            const QJsonObject obj = QJsonDocument::fromJson(raw).object();
+            if (!obj.value("ok").toBool()) return;
             QVector<DailyBarLite> bars;
-            bars.reserve(arr.size());
-            for (const QJsonValue &v : arr) {
-                const QJsonArray row = v.toArray();
-                if (row.size() >= 3) {
-                    const int dt = row[0].toString().remove('-').toInt();
-                    const double cl = row[2].toString().toDouble();
-                    if (dt > 0 && cl > 0) bars.append({dt, cl});
-                }
+            for (const QJsonValue &v : obj.value("bars").toArray()) {
+                const QJsonObject bo = v.toObject();
+                const int dt = bo.value("date").toString().toInt();
+                const double cl = bo.value("close").toDouble();
+                if (dt > 0 && cl > 0) bars.append({dt, cl});
             }
             if (!bars.isEmpty()) {
                 m_indexBars[ik] = bars;
@@ -249,7 +241,7 @@ void HudOverlay::fetchIndexBarsIfNeeded() {
 }
 
 void HudOverlay::fetchStockBarsForDeviation(const QString &stockKey) {
-    if (stockKey.size() != 7) return;
+    if (m_agentBaseUrl.isEmpty() || stockKey.size() != 7) return;
     fetchIndexBarsIfNeeded();
     fetchLiveIndexQuotes();
     if (m_stockBarsCache.contains(stockKey)) {
@@ -267,34 +259,25 @@ void HudOverlay::fetchStockBarsForDeviation(const QString &stockKey) {
         return;
     }
     if (m_inFlight.contains(stockKey)) return;
-    const QString sym = toTencentSymbol(stockKey);
-    if (sym.isEmpty()) return;
     m_inFlight.insert(stockKey);
 
-    QUrl url(QString("https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=%1,day,,,45,qfq").arg(sym));
-    QNetworkRequest req(url);
-    req.setRawHeader("User-Agent", "Mozilla/5.0");
-    QNetworkReply *reply = m_nam->get(req);
-    connect(reply, &QNetworkReply::finished, this, [this, reply, stockKey, sym]() {
+    QUrl url(QString("%1/data/bars?key=%2&period=day&limit=45").arg(m_agentBaseUrl, stockKey));
+    QNetworkReply *reply = m_nam->get(QNetworkRequest(url));
+    connect(reply, &QNetworkReply::finished, this, [this, reply, stockKey]() {
         m_inFlight.remove(stockKey);
         const QByteArray raw = reply->readAll();
         const bool ok = (reply->error() == QNetworkReply::NoError);
         reply->deleteLater();
         if (!ok || raw.isEmpty()) return;
 
-        const QJsonObject root = QJsonDocument::fromJson(raw).object();
-        const QJsonObject symObj = root.value("data").toObject().value(sym).toObject();
-        QJsonArray arr = symObj.value("qfqday").toArray();
-        if (arr.isEmpty()) arr = symObj.value("day").toArray();
+        const QJsonObject obj = QJsonDocument::fromJson(raw).object();
+        if (!obj.value("ok").toBool()) return;
         QVector<DailyBarLite> bars;
-        bars.reserve(arr.size());
-        for (const QJsonValue &v : arr) {
-            const QJsonArray row = v.toArray();
-            if (row.size() >= 3) {
-                const int dt = row[0].toString().remove('-').toInt();
-                const double cl = row[2].toString().toDouble();
-                if (dt > 0 && cl > 0) bars.append({dt, cl});
-            }
+        for (const QJsonValue &v : obj.value("bars").toArray()) {
+            const QJsonObject bo = v.toObject();
+            const int dt = bo.value("date").toString().toInt();
+            const double cl = bo.value("close").toDouble();
+            if (dt > 0 && cl > 0) bars.append({dt, cl});
         }
         if (bars.isEmpty()) return;
         m_stockBarsCache[stockKey] = bars;
