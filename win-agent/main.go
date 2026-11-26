@@ -96,9 +96,10 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	hwnd, title := findTdxWindow()
 	resp := map[string]any{
-		"ok":    hwnd != 0,
-		"title": title,
-		"stock": extractStockName(title),
+		"ok":         hwnd != 0,
+		"title":      title,
+		"stock":      extractStockName(title),
+		"chart_type": detectTdxChartType(hwnd, title),
 	}
 	_ = json.NewEncoder(w).Encode(resp)
 }
@@ -215,6 +216,7 @@ func main() {
 	// Control & file primitives
 	mux.HandleFunc("/health", handleHealth)
 	mux.HandleFunc("/status", handleStatus)
+	mux.HandleFunc("/debug/tdx-view", handleDebugTdxView)
 	mux.HandleFunc("/switch", handleSwitch)
 	mux.HandleFunc("/file", handleFile)
 	mux.HandleFunc("/blk", handleWriteBlk)

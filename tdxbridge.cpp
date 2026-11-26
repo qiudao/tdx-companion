@@ -294,8 +294,9 @@ void TdxBridge::pollAgentStatus() {
         const QJsonObject obj = QJsonDocument::fromJson(reply->readAll()).object();
         const QString title = obj["title"].toString();
         const QString stock = obj["stock"].toString().trimmed();
+        const QString chartType = obj["chart_type"].toString().trimmed().toLower();
 
-        // Parse Tongdaxin view mode from window title bracket, e.g. "[分析图表-凡拓数创]"
+        // Parse Tongdaxin view mode (prefer win-agent chart_type, fallback to title bracket)
         QString inner;
         int lb = title.lastIndexOf('[');
         int rb = title.lastIndexOf(']');
@@ -304,7 +305,16 @@ void TdxBridge::pollAgentStatus() {
         }
         bool isKline = false;
         QString viewLabel;
-        if (inner.contains("分析图表")) {
+        if (chartType == "kline") {
+            isKline = true;
+            viewLabel = "K线图";
+        } else if (chartType == "min") {
+            viewLabel = "分时图";
+        } else if (chartType == "quote") {
+            viewLabel = inner.contains("综合排名") ? "综合排名" : "行情报价";
+        } else if (chartType == "f10") {
+            viewLabel = "F10资料";
+        } else if (inner.contains("分析图表")) {
             isKline = true;
             viewLabel = "K线图";
         } else if (inner.contains("分时")) {
