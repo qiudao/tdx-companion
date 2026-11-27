@@ -26,6 +26,12 @@ func usage() {
   tdx-cli switch <代码或名称>           切换通达信主图个股
   tdx-cli blk list                      列出通达信自定义板块 (.blk)
   tdx-cli blk write <板块名> <代码...>  写入通达信自定义板块 (.blk)
+  tdx-cli notice [flags]                直连巨潮查询/监控严重异常波动与停牌核查公告
+    --days int      回看天数（默认 3）
+    --keywords str  关键词（默认 "严重异常波动,停牌核查"）
+    --watch         持续轮询新公告并触发 macOS 原生通知
+    --interval int  轮询间隔秒数（默认 60）
+    --zxg           仅关注自选股
   tdx-cli trade <subcmd>                交易网关 (health|assets|orders|capacity|submit|cancel)
 `)
 }
@@ -304,6 +310,13 @@ func main() {
 	sub := os.Args[1]
 	if sub == "-h" || sub == "--help" || sub == "help" {
 		usage()
+		return
+	}
+	if sub == "notice" || sub == "ann" {
+		if err := cmdNotice(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "错误: %v\n", err)
+			os.Exit(1)
+		}
 		return
 	}
 
