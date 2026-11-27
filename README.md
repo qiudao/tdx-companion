@@ -29,7 +29,9 @@ macOS (Qt6) 同类自选股联动伴侣 + Windows (Go) 静默代理，用于配�
 │   ├── main.go         # Windows 端纯「数据 + 控制」网关（v2.0，端口 19876）
 │   └── marketdata.go   # 纵切 /data/bars、横切 /data/cross-section (gzip)、/data/blocks
 ├── tools/
-│   └── tdx_sync.py     # macOS 离线同步脚本（增量写入 ~/.tdx_local_data/market.db）与离线复盘
+│   ├── tdx_sync.py     # macOS 离线同步脚本（增量写入 ~/.tdx_local_data/market.db）与离线复盘
+│   ├── tdx-cli/        # macOS 零依赖 Go CLI（严重异动 dev、巨潮公告监控 notice、切股 switch、板块 blk）
+│   └── tdx-hub/        # 云端 Go 实时情报中心（部署于 tengxun_kanglei，详见 tools/tdx-hub/README.md）
 └── docs/
     └── AGENT_ARCHITECTURE.md  # 纯数据层架构与接口规范
 ```

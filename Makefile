@@ -2,7 +2,7 @@ QT_VERSION := $(shell if [ -d "$(HOME)/Qt/6.10.2/macos" ]; then echo "6.10.2"; e
 QT_PATH := $(HOME)/Qt/$(QT_VERSION)/macos
 CMAKE := $(HOME)/Qt/Tools/CMake/CMake.app/Contents/bin/cmake
 
-.PHONY: all configure build run clean cli cli-install trade-agent
+.PHONY: all configure build run clean cli cli-install trade-agent hub-deploy
 
 all: build
 
@@ -30,6 +30,12 @@ vision-ocr:
 	swiftc -O tools/vision-ocr/main.swift -o tools/vision-ocr/vision-ocr -framework Vision -framework AppKit
 	mkdir -p "$(HOME)/.local/bin"
 	install -m 755 tools/vision-ocr/vision-ocr "$(HOME)/.local/bin/vision-ocr"
+
+hub-deploy:
+	cd tools/tdx-hub && GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o tdx-hub-linux-amd64 .
+	scp -q tools/tdx-hub/tdx-hub-linux-amd64 tengxun_kanglei:/tmp/tdx-hub
+	rm -f tools/tdx-hub/tdx-hub-linux-amd64
+	ssh tengxun_kanglei 'sudo mv /tmp/tdx-hub /opt/tdx-hub/tdx-hub && sudo chmod +x /opt/tdx-hub/tdx-hub && sudo systemctl restart tdx-hub.service && sudo systemctl is-active tdx-hub.service'
 
 clean:
 	rm -rf build tools/tdx-cli/tdx-cli
