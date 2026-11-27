@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>TDX Hub · A股实时情报中心</title>
+<style>
+  :root { --bg:#0b0d12; --panel:#131722; --panel2:#181d2a; --border:#252c3d; --text:#e6eaf2; --muted:#8b95a8; --red:#ff3b47; --orange:#ff8f1f; --gold:#ffd43b; --cyan:#22d3ee; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font-family:-apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif; font-size:13px; }
+  .wrap { max-width:1380px; margin:0 auto; padding:16px 18px 48px; }
+  .hdr { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:10px; border-bottom:1px solid var(--border); padding-bottom:12px; }
+  .hdr h1 { margin:0; font-size:19px; }
+  .tabs { display:flex; gap:8px; }
+  .tab { background:var(--panel); border:1px solid var(--border); color:var(--text); padding:6px 14px; border-radius:7px; cursor:pointer; font-size:13px; }
+  .tab.active { background:#4a1218; border-color:var(--red); color:var(--gold); font-weight:600; }
+  .bar { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:14px 0; }
+  .bar input { background:var(--panel); border:1px solid var(--border); color:var(--text); padding:6px 10px; border-radius:6px; width:240px; outline:none; }
+  .btn { background:var(--panel2); border:1px solid var(--border); color:var(--text); padding:6px 12px; border-radius:6px; cursor:pointer; font-size:12px; }
+  .btn:hover { border-color:var(--cyan); color:var(--cyan); }
+  .meta { color:var(--muted); font-size:12px; margin-left:auto; }
+  .card { background:var(--panel); border:1px solid var(--border); border-radius:10px; margin-bottom:12px; overflow:hidden; }
+  .card-hdr { display:flex; flex-wrap:wrap; align-items:center; gap:10px; padding:10px 14px; background:var(--panel2); border-bottom:1px solid var(--border); }
+  .card-title { font-weight:700; color:var(--gold); font-size:15px; }
+  .badge { background:#4a1218; color:#ffb4b4; border:1px solid #7f1d1d; padding:1px 8px; border-radius:999px; font-size:11px; }
+  .reason { color:#cbd5e1; font-size:12px; }
+  table { width:100%; border-collapse:collapse; }
+  th { text-align:left; font-size:11px; color:var(--muted); padding:7px 10px; border-bottom:1px solid var(--border); white-space:nowrap; }
+  td { padding:8px 10px; border-bottom:1px solid #1d2332; vertical-align:top; }
+  tr:last-child td { border-bottom:none; }
+  tr:hover td { background:#1a2133; }
+  .num { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+  a { color:var(--cyan); text-decoration:none; }
+  a:hover { text-decoration:underline; }
+  .code { color:var(--muted); font-size:11px; font-family:ui-monospace,Menlo,monospace; }
+  .lbc { display:inline-block; padding:1px 7px; border-radius:4px; font-size:11px; font-weight:700; background:#1e293b; color:#94a3b8; }
+  .lbc.hi { background:#7f1d1d; color:#fecaca; }
+  .lbc.mid { background:#422006; color:#fde047; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="hdr">
+    <h1>TDX Hub · A股实时情报中心</h1>
+    <div class="tabs">
+      <button class="tab active" onclick="switchTab('notices', this)">严重异动 / 停牌核查公告</button>
+      <button class="tab" onclick="switchTab('limitup', this)">实时涨停板题材分类</button>
+    </div>
+  </div>
+  <div class="bar">
+    <input id="q" placeholder="搜索股票 / 代码 / 题材 / 标题..." oninput="render()" />
+    <button class="btn" onclick="loadAll(true)">立即刷新</button>
+    <span class="meta" id="metaInfo">加载中...</span>
+  </div>
+  <div id="content"></div>
+</div>
+<script>
+let tab = 'notices', noticesData = null, limitupData = null;
+
+function switchTab(t, el) {
+  tab = t;
+  document.querySelectorAll('.tab').forEach(b => b.classList.remove('active'));
+  el.classList.add('active');
+  render();
+}
+
+async function loadAll(force=false) {
+  const qs = force ? '?refresh=1' : '';
+  const [nRes, lRes] = await Promise.all([
+    fetch('/api/notices' + qs).then(r => r.json()).catch(() => null),
+    fetch('/api/limit-up' + qs).then(r => r.json()).catch(() => null),
+  ]);
+  if (nRes) noticesData = nRes;
+  if (lRes) limitupData = lRes;
+  render();
+}
+
+function render() {
+  const q = document.getElementById('q').value.trim().toLowerCase();
+  const box = document.getElementById('content');
+  const meta = document.getElementById('metaInfo');
+  if (tab === 'notices') {
+    if (!noticesData) { box.innerHTML = '<div class="card" style="padding:24px;color:var(--muted)">加载中...</div>'; return; }
+    meta.textContent = `巨潮近${noticesData.days}天 · ${noticesData.count}条 · 更新于 ${noticesData.updated_at} · API: /api/notices`;
+    const items = (noticesData.items || []).filter(x => !q || `${x.code} ${x.name} ${x.title} ${x.board}`.toLowerCase().includes(q));
+    box.innerHTML = `<div class="card"><table>
+      <thead><tr><th>发布时间</th><th>板块</th><th>股票</th><th>公告标题</th><th>原文</th></tr></thead>
+      <tbody>${items.map(x => `<tr>
+        <td style="white-space:nowrap;color:#cbd5e1">${x.time}</td>
+        <td><span class="badge">${x.board}</span></td>
+        <td style="white-space:nowrap"><b style="color:var(--gold)">${x.name}</b> <span class="code">${x.code}</span></td>
+        <td>${x.title}</td>
+        <td style="white-space:nowrap">${x.url ? `<a href="${x.url}" target="_blank">PDF</a>` : '--'}</td>
+      </tr>`).join('')}</tbody></table></div>`;
+  } else {
+    if (!limitupData) { box.innerHTML = '<div class="card" style="padding:24px;color:var(--muted)">加载中...</div>'; return; }
+    meta.textContent = `交易日 ${limitupData.trade_date} · ${limitupData.count}只涨停 · 更新于 ${limitupData.updated_at} · API: /api/limit-up`;
+    const stocks = (limitupData.stocks || []).filter(s => !q || `${s.code} ${s.name} ${s.primary_plate} ${(s.other_plates||[]).join(' ')} ${s.reason}`.toLowerCase().includes(q));
+    const byPlate = new Map();
+    for (const s of stocks) {
+      if (!byPlate.has(s.primary_plate)) byPlate.set(s.primary_plate, []);
+      byPlate.get(s.primary_plate).push(s);
+    }
+    const reasonMap = Object.fromEntries((limitupData.plates || []).map(p => [p.name, p.reason]));
+    const groups = Array.from(byPlate.entries()).sort((a,b) => b[1].length - a[1].length);
+    box.innerHTML = groups.map(([pname, arr]) => `
+      <div class="card">
+        <div class="card-hdr">
+          <span class="card-title">${pname}</span>
+          <span class="badge">${arr.length}只</span>
+          ${reasonMap[pname] ? `<span class="reason">催化：${reasonMap[pname]}</span>` : ''}
+        </div>
+        <table>
+          <thead><tr><th>股票</th><th>连板</th><th class="num">现价/涨幅</th><th class="num">成交/换手</th><th class="num">封单/炸板</th><th class="num">首封</th><th>涨停原因</th></tr></thead>
+          <tbody>${arr.map(s => `<tr>
+            <td style="white-space:nowrap"><b style="color:var(--gold)">${s.name}</b><div class="code">${s.code} · ${s.ltsz_yi}亿</div></td>
+            <td><span class="lbc ${s.lbc>=3?'hi':(s.lbc==2?'mid':'')}">${s.board_label}</span></td>
+            <td class="num"><span style="color:var(--red);font-weight:600">${s.price.toFixed(2)}</span><div class="code">+${s.pct.toFixed(2)}%</div></td>
+            <td class="num" style="color:var(--cyan)">${s.amount_yi>0?s.amount_yi.toFixed(2)+'亿':'--'}<div class="code">换${s.hs}%</div></td>
+            <td class="num" style="color:var(--gold)">${s.fund_yi>0?s.fund_yi.toFixed(2)+'亿':'--'}<div class="code">炸${s.zbc}次</div></td>
+            <td class="num">${s.first_time}</td>
+            <td style="color:#d6dde8;font-size:12px">${s.reason}</td>
+          </tr>`).join('')}</tbody>
+        </table>
+      </div>
+    `).join('');
+  }
+}
+
+loadAll();
+setInterval(() => loadAll(false), 60000);
+</script>
+</body>
+</html>
