@@ -100,20 +100,30 @@ func queryCNINFO(client *http.Client, column, keyword, seDate string) ([]cninfoR
 	return parsed.Announcements, nil
 }
 
+func exchangeByCode(code string) string {
+	if strings.HasPrefix(code, "688") || strings.HasPrefix(code, "689") {
+		return "科创"
+	}
+	if strings.HasPrefix(code, "6") {
+		return "沪主"
+	}
+	if strings.HasPrefix(code, "30") {
+		return "创业"
+	}
+	if strings.HasPrefix(code, "00") {
+		return "深主"
+	}
+	if strings.HasPrefix(code, "92") || strings.HasPrefix(code, "8") || strings.HasPrefix(code, "4") {
+		return "北交"
+	}
+	return "A股"
+}
+
 func fetchSevereNotices(keywords []string, days int, zxg map[string]bool, onlyZxg bool) ([]NoticeItem, error) {
 	now := time.Now()
 	start := now.AddDate(0, 0, -days).Format("2006-01-02")
 	end := now.AddDate(0, 0, 1).Format("2006-01-02")
 	seDate := start + "~" + end
-
-	exchanges := []struct {
-		col  string
-		name string
-	}{
-		{"szse", "深市"},
-		{"sse", "沪市"},
-		{"bj", "北交"},
-	}
 
 	httpClient := &http.Client{Timeout: 10 * time.Second}
 	var mu sync.Mutex
@@ -121,60 +131,58 @@ func fetchSevereNotices(keywords []string, days int, zxg map[string]bool, onlyZx
 	byID := map[string]NoticeItem{}
 	var firstErr error
 
-	for _, ex := range exchanges {
-		for _, kw := range keywords {
-			kw = strings.TrimSpace(kw)
-			if kw == "" {
-				continue
-			}
-			wg.Add(1)
-			go func(col, exName, keyword string) {
-				defer wg.Done()
-				items, err := queryCNINFO(httpClient, col, keyword, seDate)
-				mu.Lock()
-				defer mu.Unlock()
-				if err != nil {
-					if firstErr == nil {
-						firstErr = err
-					}
-					return
-				}
-				for _, it := range items {
-					id := strings.TrimSpace(it.AnnouncementID)
-					if id == "" {
-						id = it.SecCode + "_" + it.AnnouncementTitle
-					}
-					if _, exists := byID[id]; exists {
-						continue
-					}
-					inWatch := zxg[it.SecCode]
-					if onlyZxg && !inWatch {
-						continue
-					}
-					tStr := ""
-					if it.AnnouncementTime > 0 {
-						tStr = time.UnixMilli(it.AnnouncementTime).Format("2006-01-02 15:04")
-					}
-					pdfURL := ""
-					if it.AdjunctURL != "" {
-						pdfURL = "https://static.cninfo.com.cn/" + strings.TrimPrefix(it.AdjunctURL, "/")
-					}
-					cleanTitle := strings.NewReplacer("<em>", "", "</em>", "", "\n", " ", "\r", "").Replace(strings.TrimSpace(it.AnnouncementTitle))
-					byID[id] = NoticeItem{
-						ID:         id,
-						Exchange:   exName,
-						Code:       it.SecCode,
-						Name:       strings.TrimSpace(it.SecName),
-						Title:      cleanTitle,
-						TimeUnixMs: it.AnnouncementTime,
-						TimeStr:    tStr,
-						URL:        pdfURL,
-						InWatch:    inWatch,
-						MatchedKW:  keyword,
-					}
-				}
-			}(ex.col, ex.name, kw)
+	for _, kw := range keywords {
+		kw = strings.TrimSpace(kw)
+		if kw == "" {
+			continue
 		}
+		wg.Add(1)
+		go func(keyword string) {
+			defer wg.Done()
+			items, err := queryCNINFO(httpClient, "szse", keyword, seDate)
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				if firstErr == nil {
+					firstErr = err
+				}
+				return
+			}
+			for _, it := range items {
+				id := strings.TrimSpace(it.AnnouncementID)
+				if id == "" {
+					id = it.SecCode + "_" + it.AnnouncementTitle
+				}
+				if _, exists := byID[id]; exists {
+					continue
+				}
+				inWatch := zxg[it.SecCode]
+				if onlyZxg && !inWatch {
+					continue
+				}
+				tStr := ""
+				if it.AnnouncementTime > 0 {
+					tStr = time.UnixMilli(it.AnnouncementTime).Format("2006-01-02 15:04")
+				}
+				pdfURL := ""
+				if it.AdjunctURL != "" {
+					pdfURL = "https://static.cninfo.com.cn/" + strings.TrimPrefix(it.AdjunctURL, "/")
+				}
+				cleanTitle := strings.NewReplacer("<em>", "", "</em>", "", "\n", " ", "\r", "").Replace(strings.TrimSpace(it.AnnouncementTitle))
+				byID[id] = NoticeItem{
+					ID:         id,
+					Exchange:   exchangeByCode(it.SecCode),
+					Code:       it.SecCode,
+					Name:       strings.TrimSpace(it.SecName),
+					Title:      cleanTitle,
+					TimeUnixMs: it.AnnouncementTime,
+					TimeStr:    tStr,
+					URL:        pdfURL,
+					InWatch:    inWatch,
+					MatchedKW:  keyword,
+				}
+			}
+		}(kw)
 	}
 	wg.Wait()
 
